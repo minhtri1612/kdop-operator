@@ -1,0 +1,29 @@
+# This rule is not used by the project kdop-operator itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants read-only access to kdop.kdop.io.vn resources.
+# This role is intended for users who need visibility into these resources
+# without permissions to modify them. It is ideal for monitoring purposes and limited-access viewing.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: kdop-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: dockerhost-viewer-role
+rules:
+- apiGroups:
+  - kdop.kdop.io.vn
+  resources:
+  - dockerhosts
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - kdop.kdop.io.vn
+  resources:
+  - dockerhosts/status
+  verbs:
+  - get

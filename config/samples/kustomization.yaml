@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- kdop_v1alpha1_dockerhost.yaml
+- kdop_v1alpha1_dockercontainer.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

@@ -1,0 +1,9 @@
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerContainer
+metadata:
+  labels:
+    app.kubernetes.io/name: kdop-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: dockercontainer-sample
+spec:
+  # TODO(user): Add fields here
