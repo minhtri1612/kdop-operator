@@ -51,7 +51,9 @@ var _ = Describe("DockerHost Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: kdopv1alpha1.DockerHostSpec{
+						HostURL: "unix:///var/run/docker.sock",
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
