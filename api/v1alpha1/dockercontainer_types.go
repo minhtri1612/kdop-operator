@@ -25,43 +25,38 @@ import (
 
 // DockerContainerSpec defines the desired state of DockerContainer
 type DockerContainerSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of DockerContainer. Edit dockercontainer_types.go to remove/update
+	// Image to run (required)
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image"`
+	// ContainerName on the Docker host. Defaults to metadata.name if empty.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	ContainerName string `json:"containerName,omitempty"`
+	// DockerHostRef names a DockerHost in the same namespace.
+	// Empty = local unix socket (/var/run/docker.sock)
+	// +optional
+	DockerHostRef string `json:"dockerHostRef,omitempty"`
+	// RestartPolicy: no | on-failure | always | unless-stopped
+	// +kubebuilder:validation:Enum=no;on-failure;always;unless-stopped
+	// +kubebuilder:default=always
+	// +optional
+	RestartPolicy string `json:"restartPolicy,omitempty"`
 }
 
-// DockerContainerStatus defines the observed state of DockerContainer.
+// DockerContainerStatus defines the observed state of DockerContainer
 type DockerContainerStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the DockerContainer resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
-	// +listType=map
-	// +listMapKey=type
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// ID is the Docker container ID
+	ID string `json:"id,omitempty"`
+	// State: running | exited | created | ...
+	State string `json:"state,omitempty"`
+	// IPv4 on the Docker network (optional, phase sau tunnel)
+	IPv4 string `json:"ipv4,omitempty"`
 }
 
+// +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.state`
+// +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-
-// DockerContainer is the Schema for the dockercontainers API
 type DockerContainer struct {
 	metav1.TypeMeta `json:",inline"`
 

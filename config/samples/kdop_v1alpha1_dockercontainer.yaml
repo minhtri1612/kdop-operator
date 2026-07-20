@@ -6,4 +6,6 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: dockercontainer-sample
 spec:
-  # TODO(user): Add fields here
+  image: nginx:latest
+  containerName: nginx-demo
+  restartPolicy: always

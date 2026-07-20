@@ -1,9 +1,6 @@
 apiVersion: kdop.kdop.io.vn/v1alpha1
 kind: DockerHost
 metadata:
-  labels:
-    app.kubernetes.io/name: kdop-operator
-    app.kubernetes.io/managed-by: kustomize
   name: dockerhost-sample
 spec:
-  # TODO(user): Add fields here
+  hostURL: unix:///var/run/docker.sock

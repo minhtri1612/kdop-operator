@@ -25,43 +25,31 @@ import (
 
 // DockerHostSpec defines the desired state of DockerHost
 type DockerHostSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of DockerHost. Edit dockerhost_types.go to remove/update
+	// HostURL is the Docker daemon endpoint.
+	// Examples: unix:///var/run/docker.sock, tcp://host:2376
+	// +kubebuilder:validation:MinLength=1
+	HostURL string `json:"hostURL"`
+	// TLSSecretName is a Secret (same namespace) with ca.pem, cert.pem, key.pem
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	TLSSecretName string `json:"tlsSecretName,omitempty"`
 }
 
-// DockerHostStatus defines the observed state of DockerHost.
+// DockerHostStatus defines the observed state of DockerHost
 type DockerHostStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the DockerHost resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
-	// +listType=map
-	// +listMapKey=type
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// Phase: Connected | Error
+	Phase string `json:"phase,omitempty"`
+	// Message describes connection result or last error
+	Message string `json:"message,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// DockerHost is the Schema for the dockerhosts API
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Host",type=string,JSONPath=`.spec.hostURL`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 type DockerHost struct {
 	metav1.TypeMeta `json:",inline"`
 

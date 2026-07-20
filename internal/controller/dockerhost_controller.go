@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -25,6 +26,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	kdopv1alpha1 "github.com/minhtri1612/kdop-operator/api/v1alpha1"
+	"github.com/minhtri1612/kdop-operator/internal/docker"
 )
 
 // DockerHostReconciler reconciles a DockerHost object
@@ -36,22 +38,44 @@ type DockerHostReconciler struct {
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerhosts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerhosts/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerhosts/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the DockerHost object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/reconcile
 func (r *DockerHostReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	host := &kdopv1alpha1.DockerHost{}
+	if err := r.Get(ctx, req.NamespacedName, host); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
 
-	return ctrl.Result{}, nil
+	cli, err := docker.NewClientFromHost(ctx, r.Client, host)
+	if err != nil {
+		host.Status.Phase = "Error"
+		host.Status.Message = err.Error()
+		if updateErr := r.Status().Update(ctx, host); updateErr != nil {
+			return ctrl.Result{}, updateErr
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	defer cli.Close()
+
+	phase := "Connected"
+	msg := "Successfully connected to Docker daemon"
+	if _, err := cli.Ping(ctx); err != nil {
+		phase = "Error"
+		msg = err.Error()
+		log.Error(err, "docker ping failed", "hostURL", host.Spec.HostURL)
+	}
+
+	if host.Status.Phase != phase || host.Status.Message != msg {
+		host.Status.Phase = phase
+		host.Status.Message = msg
+		if err := r.Status().Update(ctx, host); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
