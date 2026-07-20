@@ -57,7 +57,7 @@ func (r *DockerHostReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	phase := "Connected"
 	msg := "Successfully connected to Docker daemon"

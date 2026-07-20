@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,7 +70,7 @@ func (r *DockerContainerReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			cli, err := docker.NewClient(ctx, r.Client, cr.Namespace, cr.Spec.DockerHostRef)
 			if err == nil {
 				_ = removeByName(ctx, cli, name)
-				cli.Close()
+				_ = cli.Close()
 			}
 			controllerutil.RemoveFinalizer(cr, dockerContainerFinalizer)
 			return ctrl.Result{}, r.Update(ctx, cr)
@@ -88,7 +89,7 @@ func (r *DockerContainerReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		log.Error(err, "docker client")
 		return ctrl.Result{}, err
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	if err := r.sync(ctx, cli, cr, name); err != nil {
 		log.Error(err, "sync container")
@@ -108,11 +109,9 @@ func (r *DockerContainerReconciler) sync(ctx context.Context, cli dockerclient.A
 
 	var match *types.Container
 	for i := range list {
-		for _, n := range list[i].Names {
-			if n == want {
-				match = &list[i]
-				break
-			}
+		if slices.Contains(list[i].Names, want) {
+			match = &list[i]
+			break
 		}
 	}
 
@@ -146,7 +145,7 @@ func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 	_, _ = io.Copy(io.Discard, out)
 
 	policy := cr.Spec.RestartPolicy
@@ -197,10 +196,8 @@ func removeByName(ctx context.Context, cli dockerclient.APIClient, name string) 
 		return err
 	}
 	for _, c := range list {
-		for _, n := range c.Names {
-			if n == want {
-				return cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
-			}
+		if slices.Contains(c.Names, want) {
+			return cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
 		}
 	}
 	return nil
