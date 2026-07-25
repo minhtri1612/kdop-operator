@@ -57,10 +57,53 @@ spec:
                   DockerHostRef names a DockerHost in the same namespace.
                   Empty = local unix socket (/var/run/docker.sock)
                 type: string
+              env:
+                description: Env is a list of literal "KEY=VALUE" entries.
+                items:
+                  type: string
+                type: array
+              envVars:
+                description: EnvVars supports literal Value or ValueFrom.SecretKeyRef.
+                items:
+                  description: EnvVar defines an environment variable.
+                  properties:
+                    name:
+                      description: Name of the environment variable
+                      type: string
+                    value:
+                      description: Value is a literal value (optional if ValueFrom
+                        is set)
+                      type: string
+                    valueFrom:
+                      description: ValueFrom reads the value from a K8s Secret
+                      properties:
+                        secretKeyRef:
+                          description: SecretKeyRef selects a key of a Secret in the
+                            same namespace
+                          properties:
+                            key:
+                              description: Key of the secret to select
+                              type: string
+                            name:
+                              description: Name of the Secret
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
               image:
                 description: Image to run (required)
                 minLength: 1
                 type: string
+              ports:
+                items:
+                  type: string
+                type: array
               restartPolicy:
                 default: always
                 description: 'RestartPolicy: no | on-failure | always | unless-stopped'
@@ -70,6 +113,44 @@ spec:
                 - always
                 - unless-stopped
                 type: string
+              secretVolumes:
+                description: SecretVolumes uploads K8s Secret keys as files into the
+                  container.
+                items:
+                  description: SecretVolume maps a K8s Secret into a directory inside
+                    the container.
+                  properties:
+                    mountPath:
+                      description: MountPath is the absolute path in the container
+                        (e.g. /etc/secrets)
+                      type: string
+                    secretName:
+                      description: SecretName is the Secret in the same namespace
+                      type: string
+                  required:
+                  - mountPath
+                  - secretName
+                  type: object
+                type: array
+              volumeMounts:
+                description: VolumeMounts binds host paths into the container.
+                items:
+                  description: VolumeMount binds a host path into the container.
+                  properties:
+                    containerPath:
+                      description: ContainerPath is the absolute path in the container
+                      type: string
+                    hostPath:
+                      description: HostPath is the absolute path on the Docker host
+                      type: string
+                    readOnly:
+                      description: ReadOnly mounts the volume read-only
+                      type: boolean
+                  required:
+                  - containerPath
+                  - hostPath
+                  type: object
+                type: array
             required:
             - image
             type: object

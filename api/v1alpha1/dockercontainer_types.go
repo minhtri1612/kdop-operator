@@ -40,6 +40,24 @@ type DockerContainerSpec struct {
 	// +kubebuilder:default=always
 	// +optional
 	RestartPolicy string `json:"restartPolicy,omitempty"`
+
+	Ports []string `json:"ports,omitempty"`
+
+	// Env is a list of literal "KEY=VALUE" entries.
+	// +optional
+	Env []string `json:"env,omitempty"`
+
+	// EnvVars supports literal Value or ValueFrom.SecretKeyRef.
+	// +optional
+	EnvVars []EnvVar `json:"envVars,omitempty"`
+
+	// VolumeMounts binds host paths into the container.
+	// +optional
+	VolumeMounts []VolumeMount `json:"volumeMounts,omitempty"`
+
+	// SecretVolumes uploads K8s Secret keys as files into the container.
+	// +optional
+	SecretVolumes []SecretVolume `json:"secretVolumes,omitempty"`
 }
 
 // DockerContainerStatus defines the observed state of DockerContainer
@@ -80,6 +98,54 @@ type DockerContainerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []DockerContainer `json:"items"`
+}
+
+// EnvVar defines an environment variable.
+type EnvVar struct {
+	// Name of the environment variable
+	Name string `json:"name"`
+
+	// Value is a literal value (optional if ValueFrom is set)
+	// +optional
+	Value string `json:"value,omitempty"`
+
+	// ValueFrom reads the value from a K8s Secret
+	// +optional
+	ValueFrom *EnvVarSource `json:"valueFrom,omitempty"`
+}
+
+// VolumeMount binds a host path into the container.
+type VolumeMount struct {
+	// HostPath is the absolute path on the Docker host
+	HostPath string `json:"hostPath"`
+	// ContainerPath is the absolute path in the container
+	ContainerPath string `json:"containerPath"`
+	// ReadOnly mounts the volume read-only
+	// +optional
+	ReadOnly bool `json:"readOnly,omitempty"`
+}
+
+// EnvVarSource represents a source for the value of an EnvVar.
+type EnvVarSource struct {
+	// SecretKeyRef selects a key of a Secret in the same namespace
+	// +optional
+	SecretKeyRef *SecretKeySelector `json:"secretKeyRef,omitempty"`
+}
+
+// SecretKeySelector selects a key of a Secret.
+type SecretKeySelector struct {
+	// Name of the Secret
+	Name string `json:"name"`
+	// Key of the secret to select
+	Key string `json:"key"`
+}
+
+// SecretVolume maps a K8s Secret into a directory inside the container.
+type SecretVolume struct {
+	// SecretName is the Secret in the same namespace
+	SecretName string `json:"secretName"`
+	// MountPath is the absolute path in the container (e.g. /etc/secrets)
+	MountPath string `json:"mountPath"`
 }
 
 func init() {

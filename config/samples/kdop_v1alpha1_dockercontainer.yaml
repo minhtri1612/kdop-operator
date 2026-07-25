@@ -1,11 +1,27 @@
 apiVersion: kdop.kdop.io.vn/v1alpha1
 kind: DockerContainer
 metadata:
-  labels:
-    app.kubernetes.io/name: kdop-operator
-    app.kubernetes.io/managed-by: kustomize
   name: dockercontainer-sample
 spec:
   image: nginx:latest
   containerName: nginx-demo
   restartPolicy: always
+  ports:
+    - "8091:80"
+  env:
+    - "APP_ENV=dev"
+  envVars:
+    - name: GREETING
+      value: hello
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: demo-secret
+          key: password
+  volumeMounts:
+  - hostPath: /tmp/kdop-demo
+    containerPath: /usr/share/nginx/html
+    readOnly: true
+  secretVolumes:
+  - secretName: app-config
+    mountPath: /etc/secrets

@@ -17,8 +17,12 @@ limitations under the License.
 package controller
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -27,6 +31,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -153,17 +159,48 @@ func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient
 		policy = "always"
 	}
 
+	exposed, bindings, err := parsePorts(cr.Spec.Ports)
+	if err != nil {
+		return err
+	}
+
+	resolvedEnv, err := r.resolveEnv(ctx, cr)
+	if err != nil {
+		return err
+	}
+
+	var binds []string
+	for _, v := range cr.Spec.VolumeMounts {
+		bind := fmt.Sprintf("%s:%s", v.HostPath, v.ContainerPath)
+		if v.ReadOnly {
+			bind += ":ro"
+		}
+		binds = append(binds, bind)
+	}
+
 	resp, err := cli.ContainerCreate(ctx,
-		&container.Config{Image: cr.Spec.Image},
+		&container.Config{
+			Image:        cr.Spec.Image,
+			Env:          resolvedEnv,
+			ExposedPorts: exposed,
+		},
 		&container.HostConfig{
 			RestartPolicy: container.RestartPolicy{
 				Name: container.RestartPolicyMode(strings.ToLower(policy)),
 			},
+			PortBindings: bindings,
+			Binds:        binds,
 		},
 		nil, nil, name,
 	)
 	if err != nil {
 		return err
+	}
+
+	for _, sv := range cr.Spec.SecretVolumes {
+		if err := r.uploadSecretToContainer(ctx, cli, cr.Namespace, sv, resp.ID); err != nil {
+			return err
+		}
 	}
 
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
@@ -201,6 +238,97 @@ func removeByName(ctx context.Context, cli dockerclient.APIClient, name string) 
 		}
 	}
 	return nil
+}
+
+// parsePorts converts "hostPort:containerPort" entries into Docker's exposed
+// port set and host binding map.
+func parsePorts(ports []string) (nat.PortSet, nat.PortMap, error) {
+	if len(ports) == 0 {
+		return nil, nil, nil
+	}
+
+	exposed := nat.PortSet{}
+	bindings := nat.PortMap{}
+
+	for _, p := range ports {
+		hostPort, containerPort, ok := strings.Cut(p, ":")
+		if !ok {
+			return nil, nil, fmt.Errorf("invalid port mapping %q, want \"hostPort:containerPort\"", p)
+		}
+		key, err := nat.NewPort("tcp", containerPort)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid port mapping %q: %w", p, err)
+		}
+		exposed[key] = struct{}{}
+		bindings[key] = append(bindings[key], nat.PortBinding{HostIP: "0.0.0.0", HostPort: hostPort})
+	}
+
+	return exposed, bindings, nil
+}
+
+func (r *DockerContainerReconciler) resolveEnv(ctx context.Context, cr *kdopv1alpha1.DockerContainer) ([]string, error) {
+	resolved := append([]string{}, cr.Spec.Env...)
+	for _, ev := range cr.Spec.EnvVars {
+		val := ev.Value
+		if ev.ValueFrom != nil && ev.ValueFrom.SecretKeyRef != nil {
+			ref := ev.ValueFrom.SecretKeyRef
+			secretVal, err := r.getSecretValue(ctx, cr.Namespace, ref.Name, ref.Key)
+			if err != nil {
+				return nil, fmt.Errorf("env %s: %w", ev.Name, err)
+			}
+			val = secretVal
+		}
+		resolved = append(resolved, fmt.Sprintf("%s=%s", ev.Name, val))
+	}
+	return resolved, nil
+}
+
+func (r *DockerContainerReconciler) getSecretValue(ctx context.Context, namespace, name, key string) (string, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, secret); err != nil {
+		return "", err
+	}
+	val, ok := secret.Data[key]
+	if !ok {
+		return "", fmt.Errorf("key %q not found in secret %q", key, name)
+	}
+	return string(val), nil
+}
+
+func (r *DockerContainerReconciler) uploadSecretToContainer(
+	ctx context.Context,
+	cli dockerclient.APIClient,
+	namespace string,
+	sv kdopv1alpha1.SecretVolume,
+	containerID string,
+) error {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: sv.SecretName}, secret); err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	relPath := strings.TrimPrefix(sv.MountPath, "/")
+
+	for name, data := range secret.Data {
+		hdr := &tar.Header{
+			Name: filepath.Join(relPath, name),
+			Mode: 0444,
+			Size: int64(len(data)),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if _, err := tw.Write(data); err != nil {
+			return err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+
+	return cli.CopyToContainer(ctx, containerID, "/", &buf, container.CopyToContainerOptions{})
 }
 
 // SetupWithManager sets up the controller with the Manager.
