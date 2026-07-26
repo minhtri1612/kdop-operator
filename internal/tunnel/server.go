@@ -5,6 +5,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,13 +16,16 @@ import (
 
 // Server is the tunnel server (runs in-cluster later).
 type Server struct {
-	listenAddr string
-	wsAddr     string
-	authToken  string
-	sessions   []*yamux.Session
-	targets    []string
-	rrIndex    uint64
-	mu         sync.Mutex
+	listenAddr   string
+	wsAddr       string
+	authToken    string
+	sessions     []*yamux.Session
+	targets      []string
+	pushTargets  []string
+	targetsFile  string
+	lastPushTime time.Time
+	rrIndex      uint64
+	mu           sync.Mutex
 }
 
 func NewServer(listenAddr, wsAddr, authToken string, targets []string) *Server {
@@ -33,6 +38,12 @@ func NewServer(listenAddr, wsAddr, authToken string, targets []string) *Server {
 	}
 }
 
+func (s *Server) SetTargetsFile(path string) {
+	s.mu.Lock()
+	s.targetsFile = path
+	s.mu.Unlock()
+}
+
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.listenAddr)
 	if err != nil {
@@ -41,8 +52,13 @@ func (s *Server) Start() error {
 	log.Printf("Listening for TCP traffic on %s", s.listenAddr)
 	go s.acceptTCP(ln)
 
+	if s.targetsFile != "" {
+		go s.watchTargetsFile()
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWS)
+	mux.HandleFunc("/reload", s.handleReload)
 	log.Printf("Listening for Tunnel Clients on %s", s.wsAddr)
 	if s.authToken != "" {
 		log.Printf("Tunnel authentication enabled")
@@ -183,4 +199,88 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	for !session.IsClosed() {
 		time.Sleep(1 * time.Second)
 	}
+}
+
+func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	targets := r.URL.Query().Get("targets")
+	if targets != "" {
+		var newTargets []string
+		for t := range strings.SplitSeq(targets, ",") {
+			if tVal := strings.TrimSpace(t); tVal != "" {
+				newTargets = append(newTargets, tVal)
+			}
+		}
+		s.mu.Lock()
+		s.targets = newTargets
+		s.pushTargets = newTargets
+		s.lastPushTime = time.Now()
+		s.mu.Unlock()
+		log.Printf("Targets reloaded via Push: %v", newTargets)
+	} else {
+		log.Println("Targets reload triggered via API (Pulling from file)")
+		s.loadTargetsFromFile()
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) watchTargetsFile() {
+	log.Printf("Watching targets file: %s", s.targetsFile)
+	s.loadTargetsFromFile()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.loadTargetsFromFile()
+	}
+}
+
+func (s *Server) loadTargetsFromFile() {
+	data, err := os.ReadFile(s.targetsFile)
+	if err != nil {
+		log.Printf("Error reading targets file %s: %v", s.targetsFile, err)
+		return
+	}
+
+	content := strings.TrimSpace(string(data))
+	var newTargets []string
+	if content != "" {
+		for t := range strings.SplitSeq(content, ",") {
+			if tVal := strings.TrimSpace(t); tVal != "" {
+				newTargets = append(newTargets, tVal)
+			}
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.lastPushTime.IsZero() && time.Since(s.lastPushTime) < 2*time.Minute {
+		if !targetsEqual(newTargets, s.pushTargets) {
+			return
+		}
+	}
+
+	if targetsEqual(newTargets, s.targets) {
+		return
+	}
+
+	log.Printf("Dynamic targets updated from file: %v", newTargets)
+	s.targets = newTargets
+}
+
+func targetsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
