@@ -100,6 +100,11 @@ spec:
                 description: Image to run (required)
                 minLength: 1
                 type: string
+              imagePullSecret:
+                description: |-
+                  ImagePullSecret is a Secret with keys username, password, server
+                  used to authenticate private registry pulls.
+                type: string
               ports:
                 items:
                   type: string

@@ -25,3 +25,4 @@ spec:
   secretVolumes:
   - secretName: app-config
     mountPath: /etc/secrets
+  imagePullSecret: registry-cred

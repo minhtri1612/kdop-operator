@@ -20,6 +20,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -30,6 +32,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/registry"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	corev1 "k8s.io/api/core/v1"
@@ -147,7 +150,20 @@ func (r *DockerContainerReconciler) sync(ctx context.Context, cli dockerclient.A
 }
 
 func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient.APIClient, cr *kdopv1alpha1.DockerContainer, name string) error {
-	out, err := cli.ImagePull(ctx, cr.Spec.Image, image.PullOptions{})
+	pullOpts := image.PullOptions{}
+	if cr.Spec.ImagePullSecret != "" {
+		authConfig, err := r.getAuthConfig(ctx, cr.Namespace, cr.Spec.ImagePullSecret)
+		if err != nil {
+			return err
+		}
+		encodedJSON, err := json.Marshal(authConfig)
+		if err != nil {
+			return err
+		}
+		pullOpts.RegistryAuth = base64.URLEncoding.EncodeToString(encodedJSON)
+	}
+
+	out, err := cli.ImagePull(ctx, cr.Spec.Image, pullOpts)
 	if err != nil {
 		return err
 	}
@@ -240,8 +256,6 @@ func removeByName(ctx context.Context, cli dockerclient.APIClient, name string) 
 	return nil
 }
 
-// parsePorts converts "hostPort:containerPort" entries into Docker's exposed
-// port set and host binding map.
 func parsePorts(ports []string) (nat.PortSet, nat.PortMap, error) {
 	if len(ports) == 0 {
 		return nil, nil, nil
@@ -293,6 +307,26 @@ func (r *DockerContainerReconciler) getSecretValue(ctx context.Context, namespac
 		return "", fmt.Errorf("key %q not found in secret %q", key, name)
 	}
 	return string(val), nil
+}
+
+func (r *DockerContainerReconciler) getAuthConfig(ctx context.Context, namespace, secretName string) (registry.AuthConfig, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: secretName}, secret); err != nil {
+		return registry.AuthConfig{}, err
+	}
+
+	username := string(secret.Data["username"])
+	password := string(secret.Data["password"])
+	server := string(secret.Data["server"])
+	if username == "" {
+		return registry.AuthConfig{}, fmt.Errorf("username not found in secret %q", secretName)
+	}
+
+	return registry.AuthConfig{
+		Username:      username,
+		Password:      password,
+		ServerAddress: server,
+	}, nil
 }
 
 func (r *DockerContainerReconciler) uploadSecretToContainer(

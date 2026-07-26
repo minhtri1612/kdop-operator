@@ -28,6 +28,10 @@ type DockerContainerSpec struct {
 	// Image to run (required)
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
+	// ImagePullSecret is a Secret with keys username, password, server
+	// used to authenticate private registry pulls.
+	// +optional
+	ImagePullSecret string `json:"imagePullSecret,omitempty"`
 	// ContainerName on the Docker host. Defaults to metadata.name if empty.
 	// +optional
 	ContainerName string `json:"containerName,omitempty"`
