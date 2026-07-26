@@ -31,3 +31,6 @@ spec:
     interval: 5s
     timeout: 3s
     retries: 3
+  resources:
+    cpuLimit: "0.5"
+    memoryLimit: "256m"

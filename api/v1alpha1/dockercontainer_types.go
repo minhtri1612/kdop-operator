@@ -66,6 +66,10 @@ type DockerContainerSpec struct {
 	// HealthCheck configures Docker's native health check.
 	// +optional
 	HealthCheck *HealthCheckConfig `json:"healthCheck,omitempty"`
+
+	// Resources sets CPU/Memory limits for the container.
+	// +optional
+	Resources *ResourceRequirements `json:"resources,omitempty"`
 }
 
 // DockerContainerStatus defines the observed state of DockerContainer
@@ -174,6 +178,17 @@ type SecretVolume struct {
 	SecretName string `json:"secretName"`
 	// MountPath is the absolute path in the container (e.g. /etc/secrets)
 	MountPath string `json:"mountPath"`
+}
+
+// ResourceRequirements defines CPU and Memory limits.
+type ResourceRequirements struct {
+	// CPULimit in cores, e.g. "0.5" or "2"
+	// +optional
+	CPULimit string `json:"cpuLimit,omitempty"`
+
+	// MemoryLimit e.g. "256m", "1g"
+	// +optional
+	MemoryLimit string `json:"memoryLimit,omitempty"`
 }
 
 func init() {

@@ -26,6 +26,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -161,7 +162,6 @@ func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient
 		pullOpts.RegistryAuth = base64.URLEncoding.EncodeToString(encodedJSON)
 	}
 
-	// Skip pull if image already exists locally (avoids Hub 429)
 	_, _, err := cli.ImageInspectWithRaw(ctx, cr.Spec.Image)
 	if err != nil {
 		out, pullErr := cli.ImagePull(ctx, cr.Spec.Image, pullOpts)
@@ -209,6 +209,7 @@ func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient
 			},
 			PortBindings: bindings,
 			Binds:        binds,
+			Resources:    buildDockerResources(cr.Spec.Resources),
 		},
 		nil, nil, name,
 	)
@@ -355,6 +356,48 @@ func buildDockerHealthCheck(hc *kdopv1alpha1.HealthCheckConfig) *container.Healt
 		cfg.Retries = hc.Retries
 	}
 	return cfg
+}
+
+func buildDockerResources(r *kdopv1alpha1.ResourceRequirements) container.Resources {
+	if r == nil {
+		return container.Resources{}
+	}
+	res := container.Resources{}
+	if r.CPULimit != "" {
+		if cpuFloat, err := strconv.ParseFloat(r.CPULimit, 64); err == nil {
+			res.NanoCPUs = int64(cpuFloat * 1e9)
+		}
+	}
+	if r.MemoryLimit != "" {
+		res.Memory = parseMemoryString(r.MemoryLimit)
+	}
+	return res
+}
+
+func parseMemoryString(s string) int64 {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return 0
+	}
+
+	multiplier := int64(1)
+	switch {
+	case strings.HasSuffix(s, "g"):
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "g")
+	case strings.HasSuffix(s, "m"):
+		multiplier = 1024 * 1024
+		s = strings.TrimSuffix(s, "m")
+	case strings.HasSuffix(s, "k"):
+		multiplier = 1024
+		s = strings.TrimSuffix(s, "k")
+	}
+
+	val, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return val * multiplier
 }
 
 func (r *DockerContainerReconciler) uploadSecretToContainer(

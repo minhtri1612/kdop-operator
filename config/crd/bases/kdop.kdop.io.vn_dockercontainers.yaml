@@ -130,6 +130,16 @@ spec:
                 items:
                   type: string
                 type: array
+              resources:
+                description: Resources sets CPU/Memory limits for the container.
+                properties:
+                  cpuLimit:
+                    description: CPULimit in cores, e.g. "0.5" or "2"
+                    type: string
+                  memoryLimit:
+                    description: MemoryLimit e.g. "256m", "1g"
+                    type: string
+                type: object
               restartPolicy:
                 default: always
                 description: 'RestartPolicy: no | on-failure | always | unless-stopped'
