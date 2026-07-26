@@ -48,6 +48,11 @@ spec:
           spec:
             description: spec defines the desired state of DockerContainer
             properties:
+              command:
+                description: Command overrides the image ENTRYPOINT/CMD.
+                items:
+                  type: string
+                type: array
               containerName:
                 description: ContainerName on the Docker host. Defaults to metadata.name
                   if empty.

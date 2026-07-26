@@ -70,6 +70,10 @@ type DockerContainerSpec struct {
 	// Resources sets CPU/Memory limits for the container.
 	// +optional
 	Resources *ResourceRequirements `json:"resources,omitempty"`
+
+	// Command overrides the image ENTRYPOINT/CMD.
+	// +optional
+	Command []string `json:"command,omitempty"`
 }
 
 // DockerContainerStatus defines the observed state of DockerContainer

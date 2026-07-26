@@ -132,8 +132,13 @@ func (r *DockerContainerReconciler) sync(ctx context.Context, cli dockerclient.A
 		return err
 	}
 
-	if inspect.Config != nil && !strings.Contains(inspect.Config.Image, cr.Spec.Image) {
-		_ = cli.ContainerRemove(ctx, match.ID, container.RemoveOptions{Force: true})
+	// Drift: recreate if running config differs from desired spec
+	if needsRecreate(inspect, &cr.Spec) {
+		timeout := 10
+		_ = cli.ContainerStop(ctx, match.ID, container.StopOptions{Timeout: &timeout})
+		if err := cli.ContainerRemove(ctx, match.ID, container.RemoveOptions{Force: true}); err != nil {
+			return err
+		}
 		return r.create(ctx, cli, cr, name)
 	}
 
@@ -199,6 +204,7 @@ func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient
 	resp, err := cli.ContainerCreate(ctx,
 		&container.Config{
 			Image:        cr.Spec.Image,
+			Cmd:          cr.Spec.Command,
 			Env:          resolvedEnv,
 			ExposedPorts: exposed,
 			Healthcheck:  buildDockerHealthCheck(cr.Spec.HealthCheck),
@@ -398,6 +404,51 @@ func parseMemoryString(s string) int64 {
 		return 0
 	}
 	return val * multiplier
+}
+
+// needsRecreate compares running container vs desired spec on 5 axes:
+// image, command, env (literal subset), restartPolicy, resources.
+func needsRecreate(inspected types.ContainerJSON, spec *kdopv1alpha1.DockerContainerSpec) bool {
+	if inspected.Config == nil {
+		return false
+	}
+
+	// 1. Image
+	if inspected.Config.Image != spec.Image {
+		return true
+	}
+
+	// 2. Command
+	if len(spec.Command) > 0 && !slices.Equal(inspected.Config.Cmd, spec.Command) {
+		return true
+	}
+
+	// 3. Env literals
+	for _, expected := range spec.Env {
+		if !slices.Contains(inspected.Config.Env, expected) {
+			return true
+		}
+	}
+
+	// 4. RestartPolicy
+	if spec.RestartPolicy != "" && inspected.HostConfig != nil {
+		if !strings.EqualFold(string(inspected.HostConfig.RestartPolicy.Name), spec.RestartPolicy) {
+			return true
+		}
+	}
+
+	// 5. Resources
+	if spec.Resources != nil && inspected.HostConfig != nil {
+		desired := buildDockerResources(spec.Resources)
+		if desired.NanoCPUs != inspected.HostConfig.NanoCPUs {
+			return true
+		}
+		if desired.Memory != inspected.HostConfig.Memory {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (r *DockerContainerReconciler) uploadSecretToContainer(
