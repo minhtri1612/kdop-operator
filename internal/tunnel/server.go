@@ -4,15 +4,18 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"sync"
+	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/hashicorp/yamux"
 )
 
 // Server is the tunnel server (runs in-cluster later).
 type Server struct {
-	listenAddr string // TCP for Service traffic, e.g. :9000
-	wsAddr     string // WebSocket for clients — used in 3.3
+	listenAddr string
+	wsAddr     string
 	authToken  string
 	sessions   []*yamux.Session
 	targets    []string
@@ -30,7 +33,6 @@ func NewServer(listenAddr, wsAddr, authToken string, targets []string) *Server {
 	}
 }
 
-// Start listens for TCP traffic. WebSocket comes in step 3.3.
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.listenAddr)
 	if err != nil {
@@ -39,8 +41,15 @@ func (s *Server) Start() error {
 	log.Printf("Listening for TCP traffic on %s", s.listenAddr)
 	go s.acceptTCP(ln)
 
-	// Block until process exit (3.3 will replace this with http.ListenAndServe)
-	select {}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", s.handleWS)
+	log.Printf("Listening for Tunnel Clients on %s", s.wsAddr)
+	if s.authToken != "" {
+		log.Printf("Tunnel authentication enabled")
+	} else {
+		log.Printf("WARNING: Tunnel authentication disabled (no auth token set)")
+	}
+	return http.ListenAndServe(s.wsAddr, mux)
 }
 
 func (s *Server) acceptTCP(ln net.Listener) {
@@ -91,7 +100,6 @@ func (s *Server) handleTCP(conn net.Conn) {
 	}
 	defer func() { _ = stream.Close() }()
 
-	// Header: "IP:Port\n" — client dials this address
 	if _, err := stream.Write([]byte(target + "\n")); err != nil {
 		log.Printf("handleTCP: Failed to write target header: %v", err)
 		return
@@ -109,4 +117,70 @@ func (s *Server) handleTCP(conn net.Conn) {
 
 	err = <-errChan
 	log.Printf("handleTCP: Connection closed: %v", err)
+}
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("handleWS PANIC: %v", rec)
+		}
+	}()
+
+	if s.authToken != "" {
+		token := r.URL.Query().Get("token")
+		if token != s.authToken {
+			log.Printf("Tunnel auth failed from %s: invalid token", r.RemoteAddr)
+			http.Error(w, "Forbidden: invalid tunnel auth token", http.StatusForbidden)
+			return
+		}
+		log.Printf("Tunnel auth succeeded from %s", r.RemoteAddr)
+	}
+
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WS Upgrade error: %v", err)
+		return
+	}
+
+	log.Printf("Tunnel Client connected from %s", ws.RemoteAddr())
+	conn := NewWebSocketConn(ws)
+
+	yamuxConfig := yamux.DefaultConfig()
+	yamuxConfig.EnableKeepAlive = true
+	yamuxConfig.KeepAliveInterval = 10 * time.Second
+
+	session, err := yamux.Server(conn, yamuxConfig)
+	if err != nil {
+		log.Printf("Yamux Server error: %v", err)
+		_ = conn.Close()
+		return
+	}
+
+	s.mu.Lock()
+	s.sessions = append(s.sessions, session)
+	currentCount := len(s.sessions)
+	s.mu.Unlock()
+	log.Printf("Registered new session. Total active sessions: %d", currentCount)
+
+	defer func() {
+		s.mu.Lock()
+		for i, sess := range s.sessions {
+			if sess == session {
+				s.sessions = append(s.sessions[:i], s.sessions[i+1:]...)
+				break
+			}
+		}
+		remaining := len(s.sessions)
+		s.mu.Unlock()
+		_ = session.Close()
+		log.Printf("Tunnel Client disconnected. Remaining sessions: %d", remaining)
+	}()
+
+	for !session.IsClosed() {
+		time.Sleep(1 * time.Second)
+	}
 }
