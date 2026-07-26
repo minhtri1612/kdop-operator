@@ -78,7 +78,7 @@ func (r *DockerContainerReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if controllerutil.ContainsFinalizer(cr, dockerContainerFinalizer) {
 			cli, err := docker.NewClient(ctx, r.Client, cr.Namespace, cr.Spec.DockerHostRef)
 			if err == nil {
-				_ = removeByName(ctx, cli, name)
+				_ = r.deleteExternalResources(ctx, cli, cr, name)
 				_ = cli.Close()
 			}
 			controllerutil.RemoveFinalizer(cr, dockerContainerFinalizer)
@@ -132,7 +132,6 @@ func (r *DockerContainerReconciler) sync(ctx context.Context, cli dockerclient.A
 		return err
 	}
 
-	// Drift: recreate if running config differs from desired spec
 	if needsRecreate(inspect, &cr.Spec) {
 		timeout := 10
 		_ = cli.ContainerStop(ctx, match.ID, container.StopOptions{Timeout: &timeout})
@@ -256,17 +255,38 @@ func (r *DockerContainerReconciler) writeStatus(ctx context.Context, cr *kdopv1a
 	return r.Status().Update(ctx, cr)
 }
 
-func removeByName(ctx context.Context, cli dockerclient.APIClient, name string) error {
-	want := "/" + name
-	list, err := cli.ContainerList(ctx, container.ListOptions{All: true})
-	if err != nil {
+func (r *DockerContainerReconciler) deleteExternalResources(
+	ctx context.Context,
+	cli dockerclient.APIClient,
+	cr *kdopv1alpha1.DockerContainer,
+	name string,
+) error {
+	log := logf.FromContext(ctx)
+
+	// 1. Main container
+	if err := cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {
+		log.Error(err, "remove container", "name", name)
 		return err
 	}
-	for _, c := range list {
-		if slices.Contains(c.Names, want) {
-			return cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+
+	// 2. Tunnel containers (Phase 4 patterns; no-op if none exist)
+	for i := range 10 {
+		for _, tn := range []string{
+			fmt.Sprintf("%s-tunnel-%d", name, i),
+			fmt.Sprintf("%s-tunnel-%d", cr.Name, i),
+		} {
+			if err := cli.ContainerRemove(ctx, tn, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {
+				log.Error(err, "remove tunnel container", "name", tn)
+			}
 		}
 	}
+
+	// 3. Legacy single tunnel name
+	legacy := name + "-tunnel"
+	if err := cli.ContainerRemove(ctx, legacy, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {
+		log.Error(err, "remove legacy tunnel", "name", legacy)
+	}
+
 	return nil
 }
 
@@ -406,38 +426,31 @@ func parseMemoryString(s string) int64 {
 	return val * multiplier
 }
 
-// needsRecreate compares running container vs desired spec on 5 axes:
-// image, command, env (literal subset), restartPolicy, resources.
 func needsRecreate(inspected types.ContainerJSON, spec *kdopv1alpha1.DockerContainerSpec) bool {
 	if inspected.Config == nil {
 		return false
 	}
 
-	// 1. Image
 	if inspected.Config.Image != spec.Image {
 		return true
 	}
 
-	// 2. Command
 	if len(spec.Command) > 0 && !slices.Equal(inspected.Config.Cmd, spec.Command) {
 		return true
 	}
 
-	// 3. Env literals
 	for _, expected := range spec.Env {
 		if !slices.Contains(inspected.Config.Env, expected) {
 			return true
 		}
 	}
 
-	// 4. RestartPolicy
 	if spec.RestartPolicy != "" && inspected.HostConfig != nil {
 		if !strings.EqualFold(string(inspected.HostConfig.RestartPolicy.Name), spec.RestartPolicy) {
 			return true
 		}
 	}
 
-	// 5. Resources
 	if spec.Resources != nil && inspected.HostConfig != nil {
 		desired := buildDockerResources(spec.Resources)
 		if desired.NanoCPUs != inspected.HostConfig.NanoCPUs {
