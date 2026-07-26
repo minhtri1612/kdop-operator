@@ -96,6 +96,27 @@ spec:
                   - name
                   type: object
                 type: array
+              healthCheck:
+                description: HealthCheck configures Docker's native health check.
+                properties:
+                  interval:
+                    description: Interval between checks (e.g. "5s")
+                    type: string
+                  retries:
+                    description: Retries before marking unhealthy
+                    type: integer
+                  test:
+                    description: Test is the check command, e.g. ["CMD-SHELL", "pidof
+                      nginx || exit 1"]
+                    items:
+                      type: string
+                    type: array
+                  timeout:
+                    description: Timeout for one check (e.g. "3s")
+                    type: string
+                required:
+                - test
+                type: object
               image:
                 description: Image to run (required)
                 minLength: 1
@@ -162,6 +183,9 @@ spec:
           status:
             description: status defines the observed state of DockerContainer
             properties:
+              health:
+                description: 'Health: healthy | unhealthy | starting | none'
+                type: string
               id:
                 description: ID is the Docker container ID
                 type: string

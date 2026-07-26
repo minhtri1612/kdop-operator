@@ -26,3 +26,8 @@ spec:
   - secretName: app-config
     mountPath: /etc/secrets
   imagePullSecret: registry-cred
+  healthCheck:
+    test: ["CMD-SHELL", "pidof nginx || exit 1"]
+    interval: 5s
+    timeout: 3s
+    retries: 3

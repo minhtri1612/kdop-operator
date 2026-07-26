@@ -62,6 +62,10 @@ type DockerContainerSpec struct {
 	// SecretVolumes uploads K8s Secret keys as files into the container.
 	// +optional
 	SecretVolumes []SecretVolume `json:"secretVolumes,omitempty"`
+
+	// HealthCheck configures Docker's native health check.
+	// +optional
+	HealthCheck *HealthCheckConfig `json:"healthCheck,omitempty"`
 }
 
 // DockerContainerStatus defines the observed state of DockerContainer
@@ -72,6 +76,26 @@ type DockerContainerStatus struct {
 	State string `json:"state,omitempty"`
 	// IPv4 on the Docker network (optional, phase sau tunnel)
 	IPv4 string `json:"ipv4,omitempty"`
+	// Health: healthy | unhealthy | starting | none
+	Health string `json:"health,omitempty"`
+}
+
+// HealthCheckConfig defines Docker health check parameters.
+type HealthCheckConfig struct {
+	// Test is the check command, e.g. ["CMD-SHELL", "pidof nginx || exit 1"]
+	Test []string `json:"test"`
+
+	// Interval between checks (e.g. "5s")
+	// +optional
+	Interval string `json:"interval,omitempty"`
+
+	// Timeout for one check (e.g. "3s")
+	// +optional
+	Timeout string `json:"timeout,omitempty"`
+
+	// Retries before marking unhealthy
+	// +optional
+	Retries int `json:"retries,omitempty"`
 }
 
 // +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.state`

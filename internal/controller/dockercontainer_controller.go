@@ -73,7 +73,6 @@ func (r *DockerContainerReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		name = cr.Name
 	}
 
-	// Deleting
 	if !cr.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(cr, dockerContainerFinalizer) {
 			cli, err := docker.NewClient(ctx, r.Client, cr.Namespace, cr.Spec.DockerHostRef)
@@ -87,7 +86,6 @@ func (r *DockerContainerReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
-	// Add finalizer (first pass)
 	if !controllerutil.ContainsFinalizer(cr, dockerContainerFinalizer) {
 		controllerutil.AddFinalizer(cr, dockerContainerFinalizer)
 		return ctrl.Result{}, r.Update(ctx, cr)
@@ -163,12 +161,16 @@ func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient
 		pullOpts.RegistryAuth = base64.URLEncoding.EncodeToString(encodedJSON)
 	}
 
-	out, err := cli.ImagePull(ctx, cr.Spec.Image, pullOpts)
+	// Skip pull if image already exists locally (avoids Hub 429)
+	_, _, err := cli.ImageInspectWithRaw(ctx, cr.Spec.Image)
 	if err != nil {
-		return err
+		out, pullErr := cli.ImagePull(ctx, cr.Spec.Image, pullOpts)
+		if pullErr != nil {
+			return pullErr
+		}
+		defer func() { _ = out.Close() }()
+		_, _ = io.Copy(io.Discard, out)
 	}
-	defer func() { _ = out.Close() }()
-	_, _ = io.Copy(io.Discard, out)
 
 	policy := cr.Spec.RestartPolicy
 	if policy == "" {
@@ -199,6 +201,7 @@ func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient
 			Image:        cr.Spec.Image,
 			Env:          resolvedEnv,
 			ExposedPorts: exposed,
+			Healthcheck:  buildDockerHealthCheck(cr.Spec.HealthCheck),
 		},
 		&container.HostConfig{
 			RestartPolicy: container.RestartPolicy{
@@ -231,6 +234,7 @@ func (r *DockerContainerReconciler) writeStatus(ctx context.Context, cr *kdopv1a
 	cr.Status.ID = id
 	cr.Status.State = state
 	cr.Status.IPv4 = ""
+	cr.Status.Health = ""
 	if inspect.NetworkSettings != nil {
 		for _, n := range inspect.NetworkSettings.Networks {
 			if n.IPAddress != "" {
@@ -238,6 +242,9 @@ func (r *DockerContainerReconciler) writeStatus(ctx context.Context, cr *kdopv1a
 				break
 			}
 		}
+	}
+	if inspect.State != nil && inspect.State.Health != nil {
+		cr.Status.Health = inspect.State.Health.Status
 	}
 	return r.Status().Update(ctx, cr)
 }
@@ -327,6 +334,27 @@ func (r *DockerContainerReconciler) getAuthConfig(ctx context.Context, namespace
 		Password:      password,
 		ServerAddress: server,
 	}, nil
+}
+
+func buildDockerHealthCheck(hc *kdopv1alpha1.HealthCheckConfig) *container.HealthConfig {
+	if hc == nil {
+		return nil
+	}
+	cfg := &container.HealthConfig{Test: hc.Test}
+	if hc.Interval != "" {
+		if d, err := time.ParseDuration(hc.Interval); err == nil {
+			cfg.Interval = d
+		}
+	}
+	if hc.Timeout != "" {
+		if d, err := time.ParseDuration(hc.Timeout); err == nil {
+			cfg.Timeout = d
+		}
+	}
+	if hc.Retries > 0 {
+		cfg.Retries = hc.Retries
+	}
+	return cfg
 }
 
 func (r *DockerContainerReconciler) uploadSecretToContainer(
