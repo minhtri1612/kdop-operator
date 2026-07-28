@@ -18,8 +18,14 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -36,28 +42,141 @@ type DockerServiceReconciler struct {
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerservices,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerservices/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerservices/finalizers,verbs=update
+// +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockercontainers,verbs=get;list;watch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the DockerService object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/reconcile
 func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	ds := &kdopv1alpha1.DockerService{}
+	if err := r.Get(ctx, req.NamespacedName, ds); err != nil {
+		if errors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
 
-	return ctrl.Result{}, nil
+	targets, result, err := r.resolveTargetContainers(ctx, ds)
+	if err != nil {
+		log.Error(err, "failed to resolve target containers")
+		_ = r.setDockerServiceStatus(ctx, ds, "Error", err.Error())
+		return ctrl.Result{}, err
+	}
+	if result != nil {
+		return *result, nil
+	}
+
+	if len(ds.Spec.Ports) == 0 {
+		_ = r.setDockerServiceStatus(ctx, ds, "Error", "spec.ports must not be empty")
+		return ctrl.Result{}, nil
+	}
+
+	targetPort := ds.Spec.Ports[0].TargetPort
+	targetIPs := buildTargetIPs(targets, targetPort)
+
+	names := make([]string, 0, len(targets))
+	for _, tc := range targets {
+		names = append(names, tc.Name)
+	}
+
+	msg := fmt.Sprintf(
+		"resolved %d target container(s): %s; targetIPs=%v",
+		len(targets),
+		strings.Join(names, ", "),
+		targetIPs,
+	)
+	log.Info(msg)
+	_ = r.setDockerServiceStatus(ctx, ds, "Pending", msg)
+
+	// 4.4+ tunnel server/client logic sẽ dùng targetIPs
+	_ = targetIPs
+
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
+func buildTargetIPs(containers []kdopv1alpha1.DockerContainer, targetPort int32) []string {
+	var ips []string
+	for _, tc := range containers {
+		if tc.Status.IPv4 != "" {
+			ips = append(ips, fmt.Sprintf("%s:%d", tc.Status.IPv4, targetPort))
+		}
+	}
+	return ips
+}
+
+func (r *DockerServiceReconciler) resolveTargetContainers(
+	ctx context.Context,
+	ds *kdopv1alpha1.DockerService,
+) ([]kdopv1alpha1.DockerContainer, *ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	hasRef := ds.Spec.ContainerRef != ""
+	hasSelector := ds.Spec.Selector != nil
+
+	if hasRef && hasSelector {
+		msg := "spec must set either containerRef or selector, not both"
+		_ = r.setDockerServiceStatus(ctx, ds, "Error", msg)
+		return nil, &ctrl.Result{}, nil
+	}
+	if !hasRef && !hasSelector {
+		msg := "spec must set containerRef or selector"
+		_ = r.setDockerServiceStatus(ctx, ds, "Error", msg)
+		return nil, &ctrl.Result{}, nil
+	}
+
+	if hasSelector {
+		selector, err := metav1.LabelSelectorAsSelector(ds.Spec.Selector)
+		if err != nil {
+			msg := fmt.Sprintf("invalid selector: %v", err)
+			_ = r.setDockerServiceStatus(ctx, ds, "Error", msg)
+			return nil, nil, err
+		}
+
+		var list kdopv1alpha1.DockerContainerList
+		if err := r.List(ctx, &list,
+			client.InNamespace(ds.Namespace),
+			client.MatchingLabelsSelector{Selector: selector},
+		); err != nil {
+			return nil, nil, err
+		}
+
+		if len(list.Items) == 0 {
+			msg := "no matching DockerContainers found for selector"
+			log.Info(msg)
+			_ = r.setDockerServiceStatus(ctx, ds, "Pending", msg)
+			return nil, &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		return list.Items, nil, nil
+	}
+
+	dc := &kdopv1alpha1.DockerContainer{}
+	key := types.NamespacedName{Namespace: ds.Namespace, Name: ds.Spec.ContainerRef}
+	if err := r.Get(ctx, key, dc); err != nil {
+		if errors.IsNotFound(err) {
+			msg := fmt.Sprintf("DockerContainer %q not found", ds.Spec.ContainerRef)
+			log.Info(msg)
+			_ = r.setDockerServiceStatus(ctx, ds, "Pending", msg)
+			return nil, &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+		return nil, nil, err
+	}
+
+	return []kdopv1alpha1.DockerContainer{*dc}, nil, nil
+}
+
+func (r *DockerServiceReconciler) setDockerServiceStatus(
+	ctx context.Context,
+	ds *kdopv1alpha1.DockerService,
+	phase, message string,
+) error {
+	patch := client.MergeFrom(ds.DeepCopy())
+	ds.Status.Phase = phase
+	ds.Status.Message = message
+	return r.Status().Patch(ctx, ds, patch)
+}
+
 func (r *DockerServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kdopv1alpha1.DockerService{}).
-		Named("dockerservice").
 		Complete(r)
 }
