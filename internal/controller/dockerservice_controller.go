@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,6 +29,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	dockerclient "github.com/docker/docker/client"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -41,9 +45,11 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	kdopv1alpha1 "github.com/minhtri1612/kdop-operator/api/v1alpha1"
+	"github.com/minhtri1612/kdop-operator/internal/docker"
 )
 
 const tunnelWSPort int32 = 8081
+const tunnelGatewayPort = 30000
 
 // DockerServiceReconciler reconciles a DockerService object
 type DockerServiceReconciler struct {
@@ -55,10 +61,12 @@ type DockerServiceReconciler struct {
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerservices/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerservices/finalizers,verbs=update
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockercontainers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerhosts,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
 func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -75,7 +83,7 @@ func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	targets, result, err := r.resolveTargetContainers(ctx, ds)
 	if err != nil {
 		log.Error(err, "failed to resolve target containers")
-		_ = r.setDockerServiceStatus(ctx, ds, "Error", err.Error())
+		_ = r.setDockerServiceStatus(ctx, ds, "Error", 0, "", err.Error())
 		return ctrl.Result{}, err
 	}
 	if result != nil {
@@ -83,17 +91,12 @@ func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if len(ds.Spec.Ports) == 0 {
-		_ = r.setDockerServiceStatus(ctx, ds, "Error", "spec.ports must not be empty")
+		_ = r.setDockerServiceStatus(ctx, ds, "Error", 0, "", "spec.ports must not be empty")
 		return ctrl.Result{}, nil
 	}
 
 	targetPort := ds.Spec.Ports[0].TargetPort
 	targetIPs := buildTargetIPs(targets, targetPort)
-
-	names := make([]string, 0, len(targets))
-	for _, tc := range targets {
-		names = append(names, tc.Name)
-	}
 
 	desiredReplicas := int32(1)
 	if len(targetIPs) == 0 {
@@ -103,29 +106,35 @@ func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	wsURL, err := r.reconcileTunnelServer(ctx, ds, desiredReplicas, targetIPs)
 	if err != nil {
 		log.Error(err, "failed to reconcile tunnel server")
-		_ = r.setDockerServiceStatus(ctx, ds, "Error", err.Error())
+		_ = r.setDockerServiceStatus(ctx, ds, "Error", 0, "", err.Error())
 		return ctrl.Result{}, err
 	}
 
-	msg := fmt.Sprintf(
-		"resolved %d target container(s): %s; targetIPs=%v; tunnelServer=%s",
-		len(targets),
-		strings.Join(names, ", "),
-		targetIPs,
-		wsURL,
-	)
-	log.Info(msg)
+	// 4.6 — SINGLE tunnel client on Docker host (first target = representative)
+	if len(targets) > 0 && len(targetIPs) > 0 {
+		first := &targets[0]
+		cli, err := docker.NewClient(ctx, r.Client, first.Namespace, first.Spec.DockerHostRef)
+		if err != nil {
+			log.Error(err, "failed to get docker client for tunnel client")
+			_ = r.setDockerServiceStatus(ctx, ds, "Error", 0, wsURL, err.Error())
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+		defer cli.Close()
 
-	patch := client.MergeFrom(ds.DeepCopy())
-	ds.Status.Phase = "Pending"
-	ds.Status.Message = msg
-	ds.Status.TunnelServerURL = wsURL
-	if err := r.Status().Patch(ctx, ds, patch); err != nil {
-		return ctrl.Result{}, err
+		if err := r.reconcileTunnelClient(ctx, cli, ds, first, wsURL); err != nil {
+			log.Error(err, "failed to reconcile tunnel client")
+			_ = r.setDockerServiceStatus(ctx, ds, "Error", 0, wsURL, err.Error())
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		_ = r.setDockerServiceStatus(ctx, ds, "Active", 1, wsURL,
+			fmt.Sprintf("tunnel client ready; targetIPs=%v", targetIPs))
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// 4.6 tunnel client
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	_ = r.setDockerServiceStatus(ctx, ds, "Pending", 0, wsURL,
+		fmt.Sprintf("waiting for target IPv4; containers=%d", len(targets)))
+	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 }
 
 func buildTargetIPs(containers []kdopv1alpha1.DockerContainer, targetPort int32) []string {
@@ -206,8 +215,6 @@ func (r *DockerServiceReconciler) reconcileTunnelServer(
 	if opResult != controllerutil.OperationResultNone {
 		log.Info("tunnel ConfigMap reconciled", "operation", opResult, "targets", targetsCSV)
 	}
-
-	// ★ 4.5 — chỗ bạn thiếu
 	if opResult == controllerutil.OperationResultUpdated {
 		r.triggerTunnelReload(ctx, namespace, name, targetsCSV)
 	}
@@ -247,10 +254,7 @@ func (r *DockerServiceReconciler) reconcileTunnelServer(
 			})
 		}
 
-		image := os.Getenv("OPERATOR_IMAGE")
-		if image == "" {
-			image = "kdop-operator:latest"
-		}
+		imageName := operatorImage()
 
 		dep.Spec.Template = corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
@@ -259,7 +263,7 @@ func (r *DockerServiceReconciler) reconcileTunnelServer(
 			Spec: corev1.PodSpec{
 				Containers: []corev1.Container{{
 					Name:            "server",
-					Image:           image,
+					Image:           imageName,
 					ImagePullPolicy: corev1.PullIfNotPresent,
 					Args:            args,
 					Ports:           containerPorts,
@@ -292,6 +296,129 @@ func (r *DockerServiceReconciler) reconcileTunnelServer(
 	}
 
 	return fmt.Sprintf("ws://%s.%s.svc:%d/ws", name, namespace, tunnelWSPort), nil
+}
+
+func operatorImage() string {
+	if img := os.Getenv("OPERATOR_IMAGE"); img != "" {
+		return img
+	}
+	return "kdop-operator:latest"
+}
+
+func (r *DockerServiceReconciler) reconcileTunnelClient(
+	ctx context.Context,
+	cli dockerclient.APIClient,
+	ds *kdopv1alpha1.DockerService,
+	rep *kdopv1alpha1.DockerContainer,
+	wsURL string,
+) error {
+	log := logf.FromContext(ctx)
+
+	mainContainer, err := cli.ContainerInspect(ctx, rep.Spec.ContainerName)
+	if err != nil {
+		if dockerclient.IsErrNotFound(err) {
+			log.Info("representative container not found, skip tunnel client")
+			return nil
+		}
+		return err
+	}
+
+	targetNetworkID := ""
+	for _, netConf := range mainContainer.NetworkSettings.Networks {
+		targetNetworkID = netConf.NetworkID
+		break
+	}
+
+	gatewayHost := "localhost"
+	netMode := ds.Spec.NetworkMode
+	if netMode == "kind" {
+		nodes := &corev1.NodeList{}
+		if err := r.List(ctx, nodes, client.MatchingLabels{"node-role.kubernetes.io/control-plane": ""}); err == nil && len(nodes.Items) > 0 {
+			gatewayHost = nodes.Items[0].Name
+		}
+	}
+
+	authToken, err := r.ensureTunnelAuthSecret(ctx, ds)
+	if err != nil {
+		return err
+	}
+
+	img := operatorImage()
+	if _, _, err := cli.ImageInspectWithRaw(ctx, img); err != nil {
+		reader, pullErr := cli.ImagePull(ctx, img, image.PullOptions{})
+		if pullErr == nil {
+			_, _ = io.Copy(io.Discard, reader)
+			_ = reader.Close()
+		} else {
+			log.Error(pullErr, "failed to pull tunnel image (may be local only)")
+		}
+	}
+
+	clientConnectURL := fmt.Sprintf(
+		"ws://%s:%d/ws?target=%s&token=%s",
+		gatewayHost,
+		tunnelGatewayPort,
+		url.QueryEscape(wsURL),
+		url.QueryEscape(authToken),
+	)
+
+	tunnelName := fmt.Sprintf("tunnel-client-%s", ds.Name)
+
+	existing, err := cli.ContainerInspect(ctx, tunnelName)
+	if err == nil {
+		if existing.Config.Image != img {
+			log.Info("tunnel client image drift, recreating", "old", existing.Config.Image, "new", img)
+			if err := cli.ContainerRemove(ctx, tunnelName, container.RemoveOptions{Force: true}); err != nil {
+				return err
+			}
+		} else {
+			if !existing.State.Running {
+				if err := cli.ContainerStart(ctx, tunnelName, container.StartOptions{}); err != nil {
+					return err
+				}
+			}
+			log.Info("tunnel client already running", "name", tunnelName, "url", clientConnectURL)
+			return nil
+		}
+	} else if !dockerclient.IsErrNotFound(err) {
+		return err
+	}
+
+	log.Info("creating tunnel client", "name", tunnelName, "url", clientConnectURL)
+
+	cfg := &container.Config{
+		Image: img,
+		Cmd: []string{
+			"tunnel",
+			"-mode=client",
+			"-server-url=" + clientConnectURL,
+			"-auth-token=" + authToken,
+		},
+	}
+	hostCfg := &container.HostConfig{
+		RestartPolicy: container.RestartPolicy{Name: "always"},
+	}
+	switch netMode {
+	case "host":
+		hostCfg.NetworkMode = "host"
+	case "kind":
+		hostCfg.NetworkMode = "kind"
+	}
+
+	if _, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, tunnelName); err != nil {
+		return err
+	}
+	if err := cli.ContainerStart(ctx, tunnelName, container.StartOptions{}); err != nil {
+		return err
+	}
+
+	if targetNetworkID != "" && targetNetworkID != "host" && targetNetworkID != "none" {
+		if err := cli.NetworkConnect(ctx, targetNetworkID, tunnelName, nil); err != nil {
+			log.Info("network connect (may already exist)", "error", err)
+		}
+	}
+
+	return nil
 }
 
 func (r *DockerServiceReconciler) triggerTunnelReload(ctx context.Context, namespace, appName, targetsCSV string) {
@@ -374,12 +501,12 @@ func (r *DockerServiceReconciler) resolveTargetContainers(
 
 	if hasRef && hasSelector {
 		msg := "spec must set either containerRef or selector, not both"
-		_ = r.setDockerServiceStatus(ctx, ds, "Error", msg)
+		_ = r.setDockerServiceStatus(ctx, ds, "Error", 0, "", msg)
 		return nil, &ctrl.Result{}, nil
 	}
 	if !hasRef && !hasSelector {
 		msg := "spec must set containerRef or selector"
-		_ = r.setDockerServiceStatus(ctx, ds, "Error", msg)
+		_ = r.setDockerServiceStatus(ctx, ds, "Error", 0, "", msg)
 		return nil, &ctrl.Result{}, nil
 	}
 
@@ -387,7 +514,7 @@ func (r *DockerServiceReconciler) resolveTargetContainers(
 		selector, err := metav1.LabelSelectorAsSelector(ds.Spec.Selector)
 		if err != nil {
 			msg := fmt.Sprintf("invalid selector: %v", err)
-			_ = r.setDockerServiceStatus(ctx, ds, "Error", msg)
+			_ = r.setDockerServiceStatus(ctx, ds, "Error", 0, "", msg)
 			return nil, nil, err
 		}
 
@@ -402,7 +529,7 @@ func (r *DockerServiceReconciler) resolveTargetContainers(
 		if len(list.Items) == 0 {
 			msg := "no matching DockerContainers found for selector"
 			log.Info(msg)
-			_ = r.setDockerServiceStatus(ctx, ds, "Pending", msg)
+			_ = r.setDockerServiceStatus(ctx, ds, "Pending", 0, "", msg)
 			return nil, &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 
@@ -415,7 +542,7 @@ func (r *DockerServiceReconciler) resolveTargetContainers(
 		if errors.IsNotFound(err) {
 			msg := fmt.Sprintf("DockerContainer %q not found", ds.Spec.ContainerRef)
 			log.Info(msg)
-			_ = r.setDockerServiceStatus(ctx, ds, "Pending", msg)
+			_ = r.setDockerServiceStatus(ctx, ds, "Pending", 0, "", msg)
 			return nil, &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 		return nil, nil, err
@@ -427,10 +554,14 @@ func (r *DockerServiceReconciler) resolveTargetContainers(
 func (r *DockerServiceReconciler) setDockerServiceStatus(
 	ctx context.Context,
 	ds *kdopv1alpha1.DockerService,
-	phase, message string,
+	phase string,
+	clients int,
+	wsURL, message string,
 ) error {
 	patch := client.MergeFrom(ds.DeepCopy())
 	ds.Status.Phase = phase
+	ds.Status.TunnelClients = clients
+	ds.Status.TunnelServerURL = wsURL
 	ds.Status.Message = message
 	return r.Status().Patch(ctx, ds, patch)
 }
