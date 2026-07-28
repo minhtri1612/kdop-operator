@@ -17,6 +17,7 @@ rules:
   resources:
   - dockercontainers
   - dockerhosts
+  - dockerservices
   verbs:
   - create
   - delete
@@ -30,6 +31,7 @@ rules:
   resources:
   - dockercontainers/finalizers
   - dockerhosts/finalizers
+  - dockerservices/finalizers
   verbs:
   - update
 - apiGroups:
@@ -37,6 +39,7 @@ rules:
   resources:
   - dockercontainers/status
   - dockerhosts/status
+  - dockerservices/status
   verbs:
   - get
   - patch

@@ -4,6 +4,7 @@
 resources:
 - bases/kdop.kdop.io.vn_dockerhosts.yaml
 - bases/kdop.kdop.io.vn_dockercontainers.yaml
+- bases/kdop.kdop.io.vn_dockerservices.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

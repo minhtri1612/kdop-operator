@@ -1,0 +1,11 @@
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerService
+metadata:
+  name: dockerservice-sample
+spec:
+  containerRef: dockercontainer-sample
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 80
+  networkMode: kind
