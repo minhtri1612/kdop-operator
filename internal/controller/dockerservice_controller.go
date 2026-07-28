@@ -32,20 +32,22 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
+	kdopv1alpha1 "github.com/minhtri1612/kdop-operator/api/v1alpha1"
+	"github.com/minhtri1612/kdop-operator/internal/docker"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-
-	kdopv1alpha1 "github.com/minhtri1612/kdop-operator/api/v1alpha1"
-	"github.com/minhtri1612/kdop-operator/internal/docker"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const tunnelWSPort int32 = 8081
@@ -569,5 +571,60 @@ func (r *DockerServiceReconciler) setDockerServiceStatus(
 func (r *DockerServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kdopv1alpha1.DockerService{}).
+		Watches(
+			&kdopv1alpha1.DockerContainer{},
+			handler.EnqueueRequestsFromMapFunc(r.findDockerServicesForContainer),
+		).
 		Complete(r)
+}
+
+// findDockerServicesForContainer maps DockerContainer events → DockerService reconciles.
+func (r *DockerServiceReconciler) findDockerServicesForContainer(ctx context.Context, obj client.Object) []reconcile.Request {
+	dc, ok := obj.(*kdopv1alpha1.DockerContainer)
+	if !ok {
+		return nil
+	}
+
+	log := logf.FromContext(ctx)
+	log.Info("mapping container to services", "container", dc.Name, "labels", dc.Labels)
+
+	dsList := &kdopv1alpha1.DockerServiceList{}
+	if err := r.List(ctx, dsList, client.InNamespace(dc.Namespace)); err != nil {
+		log.Error(err, "failed to list DockerServices for mapping")
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for i := range dsList.Items {
+		ds := &dsList.Items[i]
+
+		// containerRef
+		if ds.Spec.ContainerRef != "" && ds.Spec.ContainerRef == dc.Name {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      ds.Name,
+					Namespace: ds.Namespace,
+				},
+			})
+			continue
+		}
+
+		// selector
+		if ds.Spec.Selector == nil {
+			continue
+		}
+		selector, err := metav1.LabelSelectorAsSelector(ds.Spec.Selector)
+		if err != nil {
+			continue
+		}
+		if selector.Matches(labels.Set(dc.Labels)) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      ds.Name,
+					Namespace: ds.Namespace,
+				},
+			})
+		}
+	}
+	return requests
 }
