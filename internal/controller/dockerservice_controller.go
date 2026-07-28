@@ -21,6 +21,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -56,6 +58,7 @@ type DockerServiceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
 func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -121,7 +124,7 @@ func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// 4.5+ push reload, 4.6 tunnel client
+	// 4.6 tunnel client
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
@@ -145,7 +148,6 @@ func (r *DockerServiceReconciler) reconcileTunnelServer(
 	namespace := ds.Namespace
 	log := logf.FromContext(ctx)
 
-	// 1. Service (ClusterIP)
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -176,13 +178,11 @@ func (r *DockerServiceReconciler) reconcileTunnelServer(
 		log.Info("tunnel Service reconciled", "operation", opResult)
 	}
 
-	// 2. Auth Secret
 	authToken, err := r.ensureTunnelAuthSecret(ctx, ds)
 	if err != nil {
 		return "", err
 	}
 
-	// 3. Targets ConfigMap
 	cmName := name + "-targets"
 	sort.Strings(targetIPs)
 	targetsCSV := strings.Join(targetIPs, ",")
@@ -207,7 +207,11 @@ func (r *DockerServiceReconciler) reconcileTunnelServer(
 		log.Info("tunnel ConfigMap reconciled", "operation", opResult, "targets", targetsCSV)
 	}
 
-	// 4. Deployment (1 replica when có targets)
+	// ★ 4.5 — chỗ bạn thiếu
+	if opResult == controllerutil.OperationResultUpdated {
+		r.triggerTunnelReload(ctx, namespace, name, targetsCSV)
+	}
+
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -288,6 +292,38 @@ func (r *DockerServiceReconciler) reconcileTunnelServer(
 	}
 
 	return fmt.Sprintf("ws://%s.%s.svc:%d/ws", name, namespace, tunnelWSPort), nil
+}
+
+func (r *DockerServiceReconciler) triggerTunnelReload(ctx context.Context, namespace, appName, targetsCSV string) {
+	log := logf.FromContext(ctx)
+	log.Info("triggering tunnel reload", "app", appName, "targets", targetsCSV)
+
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"app": appName}); err != nil {
+		log.Error(err, "failed to list tunnel pods for reload")
+		return
+	}
+	if len(podList.Items) == 0 {
+		log.Info("no active tunnel pods for reload", "app", appName)
+		return
+	}
+
+	for _, pod := range podList.Items {
+		if pod.Status.Phase != corev1.PodRunning || pod.Status.PodIP == "" {
+			continue
+		}
+		ip := pod.Status.PodIP
+		go func(ip string) {
+			u := fmt.Sprintf("http://%s:%d/reload?targets=%s", ip, tunnelWSPort, url.QueryEscape(targetsCSV))
+			resp, err := http.Post(u, "application/json", nil)
+			if err != nil {
+				log.Error(err, "failed to trigger reload", "ip", ip)
+				return
+			}
+			_ = resp.Body.Close()
+			log.Info("triggered tunnel reload", "ip", ip)
+		}(ip)
+	}
 }
 
 func (r *DockerServiceReconciler) ensureTunnelAuthSecret(
