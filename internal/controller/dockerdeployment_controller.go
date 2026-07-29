@@ -93,7 +93,6 @@ func (r *DockerDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			l.Info("Created child DockerContainer", "name", newContainer.Name, "containerName", newContainer.Spec.ContainerName)
 		}
 	} else if diff < 0 {
-		// 6.4 — Scale down (newest first)
 		removeCount := int(-diff)
 		l.Info("Scaling down", "current", currentCount, "desired", replicas, "removing", removeCount)
 		for i := 0; i < removeCount; i++ {
@@ -106,15 +105,29 @@ func (r *DockerDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 	}
 
+	// Re-list sau scale để status gần đúng hơn
 	owned, err = r.listOwnedContainers(ctx, deployment)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+
+	available := int32(0)
 	names := make([]string, 0, len(owned))
 	for _, c := range owned {
 		names = append(names, c.Name)
+		if c.Status.State == "running" {
+			available++
+		}
 	}
-	l.Info("listed owned DockerContainers", "count", len(owned), "names", names)
+	l.Info("listed owned DockerContainers", "count", len(owned), "available", available, "names", names)
+
+	if deployment.Status.AvailableReplicas != available {
+		deployment.Status.AvailableReplicas = available
+		if err := r.Status().Update(ctx, deployment); err != nil {
+			l.Error(err, "Failed to update deployment status")
+			return ctrl.Result{}, err
+		}
+	}
 
 	return ctrl.Result{RequeueAfter: deployRequeueInterval}, nil
 }
@@ -182,6 +195,7 @@ func utilRandString(n int) string {
 func (r *DockerDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kdopv1alpha1.DockerDeployment{}).
+		Owns(&kdopv1alpha1.DockerContainer{}).
 		Named("dockerdeployment").
 		Complete(r)
 }
