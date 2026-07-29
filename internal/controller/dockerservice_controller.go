@@ -52,6 +52,7 @@ import (
 
 const tunnelWSPort int32 = 8081
 const tunnelGatewayPort = 30000
+const dockerServiceFinalizer = "dockerservice.kdop.kdop.io.vn/finalizer"
 
 // DockerServiceReconciler reconciles a DockerService object
 type DockerServiceReconciler struct {
@@ -80,6 +81,28 @@ func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+
+	// Finalizer — cleanup tunnel client on Docker host
+	if !ds.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(ds, dockerServiceFinalizer) {
+			if err := r.deleteExternalResources(ctx, ds); err != nil {
+				log.Error(err, "failed to cleanup tunnel client")
+				return ctrl.Result{}, err
+			}
+			controllerutil.RemoveFinalizer(ds, dockerServiceFinalizer)
+			if err := r.Update(ctx, ds); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+	if !controllerutil.ContainsFinalizer(ds, dockerServiceFinalizer) {
+		controllerutil.AddFinalizer(ds, dockerServiceFinalizer)
+		if err := r.Update(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	targets, result, err := r.resolveTargetContainers(ctx, ds)
@@ -568,6 +591,51 @@ func (r *DockerServiceReconciler) setDockerServiceStatus(
 	return r.Status().Patch(ctx, ds, patch)
 }
 
+func (r *DockerServiceReconciler) deleteExternalResources(ctx context.Context, ds *kdopv1alpha1.DockerService) error {
+	log := logf.FromContext(ctx)
+
+	var targets []kdopv1alpha1.DockerContainer
+	if ds.Spec.Selector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(ds.Spec.Selector)
+		if err == nil {
+			var list kdopv1alpha1.DockerContainerList
+			_ = r.List(ctx, &list, client.InNamespace(ds.Namespace), client.MatchingLabelsSelector{Selector: selector})
+			targets = list.Items
+		}
+	} else if ds.Spec.ContainerRef != "" {
+		dc := &kdopv1alpha1.DockerContainer{}
+		if err := r.Get(ctx, types.NamespacedName{Namespace: ds.Namespace, Name: ds.Spec.ContainerRef}, dc); err == nil {
+			targets = []kdopv1alpha1.DockerContainer{*dc}
+		}
+	}
+
+	hosts := map[string]kdopv1alpha1.DockerContainer{}
+	for _, tc := range targets {
+		hosts[tc.Spec.DockerHostRef] = tc
+	}
+
+	tunnelName := fmt.Sprintf("tunnel-client-%s", ds.Name)
+	legacyName := fmt.Sprintf("%s-tunnel", ds.Name)
+
+	for _, tc := range hosts {
+		cli, err := docker.NewClient(ctx, r.Client, tc.Namespace, tc.Spec.DockerHostRef)
+		if err != nil {
+			log.Error(err, "docker client for cleanup", "host", tc.Spec.DockerHostRef)
+			continue
+		}
+		for _, name := range []string{tunnelName, legacyName} {
+			err := cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+			if err != nil && !dockerclient.IsErrNotFound(err) {
+				log.Error(err, "failed to remove tunnel container", "name", name)
+			} else {
+				log.Info("removed tunnel container", "name", name)
+			}
+		}
+		_ = cli.Close()
+	}
+	return nil
+}
+
 func (r *DockerServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kdopv1alpha1.DockerService{}).
@@ -578,7 +646,6 @@ func (r *DockerServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// findDockerServicesForContainer maps DockerContainer events → DockerService reconciles.
 func (r *DockerServiceReconciler) findDockerServicesForContainer(ctx context.Context, obj client.Object) []reconcile.Request {
 	dc, ok := obj.(*kdopv1alpha1.DockerContainer)
 	if !ok {
@@ -598,7 +665,6 @@ func (r *DockerServiceReconciler) findDockerServicesForContainer(ctx context.Con
 	for i := range dsList.Items {
 		ds := &dsList.Items[i]
 
-		// containerRef
 		if ds.Spec.ContainerRef != "" && ds.Spec.ContainerRef == dc.Name {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -609,7 +675,6 @@ func (r *DockerServiceReconciler) findDockerServicesForContainer(ctx context.Con
 			continue
 		}
 
-		// selector
 		if ds.Spec.Selector == nil {
 			continue
 		}
