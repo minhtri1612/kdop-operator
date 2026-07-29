@@ -3,4 +3,5 @@ resources:
 - kdop_v1alpha1_dockerhost.yaml
 - kdop_v1alpha1_dockercontainer.yaml
 - kdop_v1alpha1_dockerservice.yaml
+- kdop_v1alpha1_dockerjob.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

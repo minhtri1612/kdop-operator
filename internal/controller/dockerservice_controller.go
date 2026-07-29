@@ -50,9 +50,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const tunnelWSPort int32 = 8081
-const tunnelGatewayPort = 30000
-const dockerServiceFinalizer = "dockerservice.kdop.kdop.io.vn/finalizer"
+const (
+	tunnelWSPort           int32 = 8081
+	tunnelGatewayPort            = 30000
+	dockerServiceFinalizer       = "dockerservice.kdop.kdop.io.vn/finalizer"
+	networkModeKind              = "kind"
+	networkModeHost              = "host"
+)
 
 // DockerServiceReconciler reconciles a DockerService object
 type DockerServiceReconciler struct {
@@ -83,13 +87,9 @@ func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// Finalizer — cleanup tunnel client on Docker host
 	if !ds.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(ds, dockerServiceFinalizer) {
-			if err := r.deleteExternalResources(ctx, ds); err != nil {
-				log.Error(err, "failed to cleanup tunnel client")
-				return ctrl.Result{}, err
-			}
+			r.deleteExternalResources(ctx, ds)
 			controllerutil.RemoveFinalizer(ds, dockerServiceFinalizer)
 			if err := r.Update(ctx, ds); err != nil {
 				return ctrl.Result{}, err
@@ -135,7 +135,6 @@ func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// 4.6 — SINGLE tunnel client on Docker host (first target = representative)
 	if len(targets) > 0 && len(targetIPs) > 0 {
 		first := &targets[0]
 		cli, err := docker.NewClient(ctx, r.Client, first.Namespace, first.Spec.DockerHostRef)
@@ -144,7 +143,7 @@ func (r *DockerServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			_ = r.setDockerServiceStatus(ctx, ds, "Error", 0, wsURL, err.Error())
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
-		defer cli.Close()
+		defer func() { _ = cli.Close() }()
 
 		if err := r.reconcileTunnelClient(ctx, cli, ds, first, wsURL); err != nil {
 			log.Error(err, "failed to reconcile tunnel client")
@@ -356,7 +355,7 @@ func (r *DockerServiceReconciler) reconcileTunnelClient(
 
 	gatewayHost := "localhost"
 	netMode := ds.Spec.NetworkMode
-	if netMode == "kind" {
+	if netMode == networkModeKind {
 		nodes := &corev1.NodeList{}
 		if err := r.List(ctx, nodes, client.MatchingLabels{"node-role.kubernetes.io/control-plane": ""}); err == nil && len(nodes.Items) > 0 {
 			gatewayHost = nodes.Items[0].Name
@@ -424,10 +423,10 @@ func (r *DockerServiceReconciler) reconcileTunnelClient(
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 	}
 	switch netMode {
-	case "host":
-		hostCfg.NetworkMode = "host"
-	case "kind":
-		hostCfg.NetworkMode = "kind"
+	case networkModeHost:
+		hostCfg.NetworkMode = networkModeHost
+	case networkModeKind:
+		hostCfg.NetworkMode = networkModeKind
 	}
 
 	if _, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, tunnelName); err != nil {
@@ -437,7 +436,7 @@ func (r *DockerServiceReconciler) reconcileTunnelClient(
 		return err
 	}
 
-	if targetNetworkID != "" && targetNetworkID != "host" && targetNetworkID != "none" {
+	if targetNetworkID != "" && targetNetworkID != networkModeHost && targetNetworkID != "none" {
 		if err := cli.NetworkConnect(ctx, targetNetworkID, tunnelName, nil); err != nil {
 			log.Info("network connect (may already exist)", "error", err)
 		}
@@ -591,7 +590,7 @@ func (r *DockerServiceReconciler) setDockerServiceStatus(
 	return r.Status().Patch(ctx, ds, patch)
 }
 
-func (r *DockerServiceReconciler) deleteExternalResources(ctx context.Context, ds *kdopv1alpha1.DockerService) error {
+func (r *DockerServiceReconciler) deleteExternalResources(ctx context.Context, ds *kdopv1alpha1.DockerService) {
 	log := logf.FromContext(ctx)
 
 	var targets []kdopv1alpha1.DockerContainer
@@ -633,7 +632,6 @@ func (r *DockerServiceReconciler) deleteExternalResources(ctx context.Context, d
 		}
 		_ = cli.Close()
 	}
-	return nil
 }
 
 func (r *DockerServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {

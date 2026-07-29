@@ -54,6 +54,7 @@ rules:
   resources:
   - dockercontainers
   - dockerhosts
+  - dockerjobs
   - dockerservices
   verbs:
   - create
@@ -68,6 +69,7 @@ rules:
   resources:
   - dockercontainers/finalizers
   - dockerhosts/finalizers
+  - dockerjobs/finalizers
   - dockerservices/finalizers
   verbs:
   - update
@@ -76,6 +78,7 @@ rules:
   resources:
   - dockercontainers/status
   - dockerhosts/status
+  - dockerjobs/status
   - dockerservices/status
   verbs:
   - get

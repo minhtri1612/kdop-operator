@@ -22,6 +22,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the kdop-operator itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- dockerjob_admin_role.yaml
+- dockerjob_editor_role.yaml
+- dockerjob_viewer_role.yaml
 - dockerservice_admin_role.yaml
 - dockerservice_editor_role.yaml
 - dockerservice_viewer_role.yaml

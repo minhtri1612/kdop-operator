@@ -1,0 +1,208 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: dockerjobs.kdop.kdop.io.vn
+spec:
+  group: kdop.kdop.io.vn
+  names:
+    kind: DockerJob
+    listKind: DockerJobList
+    plural: dockerjobs
+    singular: dockerjob
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.exitCode
+      name: Exit Code
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: DockerJob runs a one-off container on a Docker host
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: DockerJobSpec defines the desired state of DockerJob
+            properties:
+              activeDeadlineSeconds:
+                description: ActiveDeadlineSeconds job timeout
+                format: int64
+                type: integer
+              args:
+                description: Args overrides CMD
+                items:
+                  type: string
+                type: array
+              backoffLimit:
+                description: BackoffLimit retries before Failed (default 0)
+                format: int32
+                type: integer
+              command:
+                description: Command overrides ENTRYPOINT
+                items:
+                  type: string
+                type: array
+              containerName:
+                description: 'ContainerName on the Docker host (default: job-<metadata.name>)'
+                type: string
+              dockerHostRef:
+                description: DockerHostRef names the DockerHost CR
+                type: string
+              env:
+                description: Env literal KEY=VALUE
+                items:
+                  type: string
+                type: array
+              envVars:
+                description: EnvVars with SecretKeyRef support
+                items:
+                  description: EnvVar defines an environment variable.
+                  properties:
+                    name:
+                      description: Name of the environment variable
+                      type: string
+                    value:
+                      description: Value is a literal value (optional if ValueFrom
+                        is set)
+                      type: string
+                    valueFrom:
+                      description: ValueFrom reads the value from a K8s Secret
+                      properties:
+                        secretKeyRef:
+                          description: SecretKeyRef selects a key of a Secret in the
+                            same namespace
+                          properties:
+                            key:
+                              description: Key of the secret to select
+                              type: string
+                            name:
+                              description: Name of the Secret
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+              image:
+                description: Image is the Docker image to run
+                minLength: 1
+                type: string
+              imagePullSecret:
+                description: ImagePullSecret for private registry
+                type: string
+              resources:
+                description: Resources CPU/Memory limits
+                properties:
+                  cpuLimit:
+                    description: CPULimit in cores, e.g. "0.5" or "2"
+                    type: string
+                  memoryLimit:
+                    description: MemoryLimit e.g. "256m", "1g"
+                    type: string
+                type: object
+              restartPolicy:
+                description: 'RestartPolicy: Never | OnFailure (default Never)'
+                type: string
+              secretVolumes:
+                description: SecretVolumes upload Secret files into container
+                items:
+                  description: SecretVolume maps a K8s Secret into a directory inside
+                    the container.
+                  properties:
+                    mountPath:
+                      description: MountPath is the absolute path in the container
+                        (e.g. /etc/secrets)
+                      type: string
+                    secretName:
+                      description: SecretName is the Secret in the same namespace
+                      type: string
+                  required:
+                  - mountPath
+                  - secretName
+                  type: object
+                type: array
+              ttlSecondsAfterFinished:
+                description: TTLSecondsAfterFinished auto-remove Docker container
+                  after completion
+                format: int32
+                type: integer
+              volumeMounts:
+                description: VolumeMounts bind mounts
+                items:
+                  description: VolumeMount binds a host path into the container.
+                  properties:
+                    containerPath:
+                      description: ContainerPath is the absolute path in the container
+                      type: string
+                    hostPath:
+                      description: HostPath is the absolute path on the Docker host
+                      type: string
+                    readOnly:
+                      description: ReadOnly mounts the volume read-only
+                      type: boolean
+                  required:
+                  - containerPath
+                  - hostPath
+                  type: object
+                type: array
+            required:
+            - image
+            type: object
+          status:
+            description: DockerJobStatus defines the observed state of DockerJob
+            properties:
+              attempts:
+                format: int32
+                type: integer
+              completionTime:
+                format: date-time
+                type: string
+              containerID:
+                type: string
+              exitCode:
+                format: int32
+                type: integer
+              message:
+                type: string
+              phase:
+                type: string
+              startTime:
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
