@@ -1,0 +1,18 @@
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerDeployment
+metadata:
+  name: nginx-scaled
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-scaled
+  template:
+    metadata:
+      labels:
+        app: nginx-scaled
+    spec:
+      image: nginx:latest
+      containerName: nginx-worker
+      restartPolicy: always
+      dockerHostRef: dockerhost-sample

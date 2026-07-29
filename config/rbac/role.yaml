@@ -53,6 +53,7 @@ rules:
   - kdop.kdop.io.vn
   resources:
   - dockercontainers
+  - dockerdeployments
   - dockerhosts
   - dockerjobs
   - dockerservices
@@ -68,6 +69,7 @@ rules:
   - kdop.kdop.io.vn
   resources:
   - dockercontainers/finalizers
+  - dockerdeployments/finalizers
   - dockerhosts/finalizers
   - dockerjobs/finalizers
   - dockerservices/finalizers
@@ -77,6 +79,7 @@ rules:
   - kdop.kdop.io.vn
   resources:
   - dockercontainers/status
+  - dockerdeployments/status
   - dockerhosts/status
   - dockerjobs/status
   - dockerservices/status

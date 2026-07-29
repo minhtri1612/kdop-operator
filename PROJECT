@@ -45,4 +45,13 @@ resources:
   kind: DockerJob
   path: github.com/minhtri1612/kdop-operator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: kdop.io.vn
+  group: kdop
+  kind: DockerDeployment
+  path: github.com/minhtri1612/kdop-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

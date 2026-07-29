@@ -6,6 +6,7 @@ resources:
 - bases/kdop.kdop.io.vn_dockercontainers.yaml
 - bases/kdop.kdop.io.vn_dockerservices.yaml
 - bases/kdop.kdop.io.vn_dockerjobs.yaml
+- bases/kdop.kdop.io.vn_dockerdeployments.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
