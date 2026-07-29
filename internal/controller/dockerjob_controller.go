@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
@@ -57,6 +58,11 @@ func (r *DockerJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+
+	// Đã xong thì thôi (tránh loop status)
+	if job.Status.Phase == kdopv1alpha1.JobPhaseSucceeded || job.Status.Phase == kdopv1alpha1.JobPhaseFailed {
+		return ctrl.Result{}, nil
 	}
 
 	cli, err := docker.NewClient(ctx, r.Client, job.Namespace, job.Spec.DockerHostRef)
@@ -137,8 +143,28 @@ func (r *DockerJobReconciler) syncJob(ctx context.Context, cli dockerclient.APIC
 		_ = r.Status().Update(ctx, job)
 		return ctrl.Result{RequeueAfter: jobRequeueInterval}, nil
 
+	case inspected.State.Status == "exited":
+		// 5.3 — Detect completion
+		exitCode := int32(inspected.State.ExitCode)
+		now := metav1.Now()
+		job.Status.ContainerID = inspected.ID
+		job.Status.ExitCode = &exitCode
+		job.Status.CompletionTime = &now
+
+		if exitCode == 0 {
+			l.Info("Job completed successfully", "Container", containerName)
+			job.Status.Phase = kdopv1alpha1.JobPhaseSucceeded
+			job.Status.Message = "Job completed successfully"
+		} else {
+			// Retry (BackoffLimit) → 5.4; tạm thời Failed luôn
+			l.Info("Job container exited with error", "Container", containerName, "ExitCode", exitCode)
+			job.Status.Phase = kdopv1alpha1.JobPhaseFailed
+			job.Status.Message = fmt.Sprintf("Job failed with exit code %d", exitCode)
+		}
+		_ = r.Status().Update(ctx, job)
+		return ctrl.Result{}, nil
+
 	default:
-		// exited / created / paused — xử lý ở 5.3+
 		return ctrl.Result{RequeueAfter: jobRequeueInterval}, nil
 	}
 }
