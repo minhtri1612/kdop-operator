@@ -60,17 +60,17 @@ func (r *DockerJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	// Đã xong thì thôi (tránh loop status)
-	if job.Status.Phase == kdopv1alpha1.JobPhaseSucceeded || job.Status.Phase == kdopv1alpha1.JobPhaseFailed {
-		return ctrl.Result{}, nil
-	}
-
 	cli, err := docker.NewClient(ctx, r.Client, job.Namespace, job.Spec.DockerHostRef)
 	if err != nil {
 		l.Error(err, "Failed to create docker client")
 		return ctrl.Result{}, err
 	}
 	defer func() { _ = cli.Close() }()
+
+	// 5.6 — đã xong → chỉ TTL cleanup
+	if job.Status.Phase == kdopv1alpha1.JobPhaseSucceeded || job.Status.Phase == kdopv1alpha1.JobPhaseFailed {
+		return r.handleTTLCleanup(ctx, cli, job)
+	}
 
 	return r.syncJob(ctx, cli, job)
 }
@@ -131,7 +131,7 @@ func (r *DockerJobReconciler) syncJob(ctx context.Context, cli dockerclient.APIC
 				job.Status.CompletionTime = &now
 				job.Status.Message = "Job exceeded ActiveDeadlineSeconds"
 				_ = r.Status().Update(ctx, job)
-				return ctrl.Result{}, nil
+				return r.handleTTLCleanup(ctx, cli, job)
 			}
 		}
 
@@ -144,7 +144,6 @@ func (r *DockerJobReconciler) syncJob(ctx context.Context, cli dockerclient.APIC
 		return ctrl.Result{RequeueAfter: jobRequeueInterval}, nil
 
 	case inspected.State.Status == "exited":
-		// 5.3 — Detect completion
 		exitCode := int32(inspected.State.ExitCode)
 		now := metav1.Now()
 		job.Status.ContainerID = inspected.ID
@@ -155,18 +154,64 @@ func (r *DockerJobReconciler) syncJob(ctx context.Context, cli dockerclient.APIC
 			l.Info("Job completed successfully", "Container", containerName)
 			job.Status.Phase = kdopv1alpha1.JobPhaseSucceeded
 			job.Status.Message = "Job completed successfully"
-		} else {
-			// Retry (BackoffLimit) → 5.4; tạm thời Failed luôn
-			l.Info("Job container exited with error", "Container", containerName, "ExitCode", exitCode)
-			job.Status.Phase = kdopv1alpha1.JobPhaseFailed
-			job.Status.Message = fmt.Sprintf("Job failed with exit code %d", exitCode)
+			_ = r.Status().Update(ctx, job)
+			return r.handleTTLCleanup(ctx, cli, job)
 		}
+
+		l.Info("Job container exited with error", "Container", containerName, "ExitCode", exitCode)
+		if job.Status.Attempts <= job.Spec.BackoffLimit {
+			l.Info("Retrying job", "Attempt", job.Status.Attempts+1, "BackoffLimit", job.Spec.BackoffLimit)
+			_ = cli.ContainerRemove(ctx, inspected.ID, container.RemoveOptions{Force: true})
+
+			containerID, err := r.createAndStartContainer(ctx, cli, job)
+			if err != nil {
+				l.Error(err, "Retry failed")
+				job.Status.Phase = kdopv1alpha1.JobPhaseFailed
+				job.Status.Message = fmt.Sprintf("Retry failed: %v", err)
+				_ = r.Status().Update(ctx, job)
+				return ctrl.Result{}, err
+			}
+
+			job.Status.Attempts++
+			job.Status.Phase = kdopv1alpha1.JobPhaseRunning
+			job.Status.ContainerID = containerID
+			job.Status.Message = fmt.Sprintf("Retrying (attempt %d/%d)", job.Status.Attempts, job.Spec.BackoffLimit+1)
+			job.Status.ExitCode = nil
+			job.Status.CompletionTime = nil
+			_ = r.Status().Update(ctx, job)
+			return ctrl.Result{RequeueAfter: jobRequeueInterval}, nil
+		}
+
+		job.Status.Phase = kdopv1alpha1.JobPhaseFailed
+		job.Status.Message = fmt.Sprintf("Job failed with exit code %d after %d attempt(s)", exitCode, job.Status.Attempts)
 		_ = r.Status().Update(ctx, job)
-		return ctrl.Result{}, nil
+		return r.handleTTLCleanup(ctx, cli, job)
 
 	default:
 		return ctrl.Result{RequeueAfter: jobRequeueInterval}, nil
 	}
+}
+
+// handleTTLCleanup removes the Docker container after TTL expires (does NOT delete the CR).
+func (r *DockerJobReconciler) handleTTLCleanup(ctx context.Context, cli dockerclient.APIClient, job *kdopv1alpha1.DockerJob) (ctrl.Result, error) {
+	if job.Spec.TTLSecondsAfterFinished == nil || job.Status.CompletionTime == nil {
+		return ctrl.Result{}, nil
+	}
+
+	ttl := time.Duration(*job.Spec.TTLSecondsAfterFinished) * time.Second
+	elapsed := time.Since(job.Status.CompletionTime.Time)
+	if elapsed < ttl {
+		return ctrl.Result{RequeueAfter: ttl - elapsed}, nil
+	}
+
+	l := log.FromContext(ctx)
+	name := r.containerName(job)
+	if err := cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {
+		l.Error(err, "Failed to remove job container after TTL", "Container", name)
+		return ctrl.Result{}, err
+	}
+	l.Info("Removed job container after TTL", "Container", name)
+	return ctrl.Result{}, nil
 }
 
 func (r *DockerJobReconciler) createAndStartContainer(ctx context.Context, cli dockerclient.APIClient, job *kdopv1alpha1.DockerJob) (string, error) {
