@@ -1,10 +1,9 @@
 apiVersion: kdop.kdop.io.vn/v1alpha1
 kind: DockerJob
 metadata:
-  name: ttl-job
+  name: finalizer-job
 spec:
   image: alpine:latest
-  command: ["echo", "ttl-test"]
+  command: ["echo", "bye"]
   restartPolicy: Never
-  ttlSecondsAfterFinished: 15
   dockerHostRef: dockerhost-sample

@@ -30,13 +30,17 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	kdopv1alpha1 "github.com/minhtri1612/kdop-operator/api/v1alpha1"
 	"github.com/minhtri1612/kdop-operator/internal/docker"
 )
 
-const jobRequeueInterval = 5 * time.Second
+const (
+	jobRequeueInterval = 5 * time.Second
+	dockerJobFinalizer = "dockerjob.kdop.kdop.io.vn/finalizer"
+)
 
 // DockerJobReconciler reconciles a DockerJob object
 type DockerJobReconciler struct {
@@ -67,7 +71,30 @@ func (r *DockerJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	defer func() { _ = cli.Close() }()
 
-	// 5.6 — đã xong → chỉ TTL cleanup
+	// 5.7 — Finalizer
+	if job.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(job, dockerJobFinalizer) {
+			controllerutil.AddFinalizer(job, dockerJobFinalizer)
+			if err := r.Update(ctx, job); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		if controllerutil.ContainsFinalizer(job, dockerJobFinalizer) {
+			name := r.containerName(job)
+			if err := cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {
+				l.Error(err, "Failed to remove job container on deletion", "Container", name)
+				return ctrl.Result{}, err
+			}
+			l.Info("Removed job container on CR deletion", "Container", name)
+			controllerutil.RemoveFinalizer(job, dockerJobFinalizer)
+			if err := r.Update(ctx, job); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
 	if job.Status.Phase == kdopv1alpha1.JobPhaseSucceeded || job.Status.Phase == kdopv1alpha1.JobPhaseFailed {
 		return r.handleTTLCleanup(ctx, cli, job)
 	}
@@ -192,7 +219,6 @@ func (r *DockerJobReconciler) syncJob(ctx context.Context, cli dockerclient.APIC
 	}
 }
 
-// handleTTLCleanup removes the Docker container after TTL expires (does NOT delete the CR).
 func (r *DockerJobReconciler) handleTTLCleanup(ctx context.Context, cli dockerclient.APIClient, job *kdopv1alpha1.DockerJob) (ctrl.Result, error) {
 	if job.Spec.TTLSecondsAfterFinished == nil || job.Status.CompletionTime == nil {
 		return ctrl.Result{}, nil
