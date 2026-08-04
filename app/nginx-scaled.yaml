@@ -7,7 +7,7 @@ dockerHost:
 
 dockerDeployment:
   enabled: true
-  replicas: 2
+  replicas: 3
   labels:
     app: nginx-scaled
   image: nginx:latest
