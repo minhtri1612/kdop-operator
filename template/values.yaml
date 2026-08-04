@@ -1,0 +1,47 @@
+# Defaults — overridden by app/<name>.yaml + env/<env>.yaml
+
+nameOverride: ""
+fullnameOverride: ""
+
+dockerHost:
+  enabled: false
+  name: dockerhost-sample
+  hostURL: tcp://docker-daemon.system.svc:2375
+
+dockerDeployment:
+  enabled: false
+  replicas: 1
+  labels:
+    app: app
+  image: nginx:latest
+  containerName: worker
+  restartPolicy: always
+  dockerHostRef: dockerhost-sample
+  command: []
+  args: []
+
+dockerService:
+  enabled: false
+  # Use selector (for DockerDeployment children) OR containerRef
+  selector:
+    enabled: true
+    matchLabels:
+      app: app
+  containerRef: ""
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 80
+  networkMode: kind
+
+dockerJob:
+  enabled: false
+  image: alpine:latest
+  command:
+    - echo
+    - hello
+  restartPolicy: Never
+  dockerHostRef: dockerhost-sample
+  backoffLimit: 0
+  ttlSecondsAfterFinished: null
+  activeDeadlineSeconds: null

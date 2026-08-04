@@ -1,0 +1,19 @@
+# Defaults — bootstrap overrides env / project / cluster / automated via helm.parameters
+repoURL: "https://github.com/minhtri1612/kdop-operator.git"
+name: "kdop"
+env: "dev"
+project: "default"
+cluster: "in-cluster"
+automated: "true"
+
+# Add a new workload = one key here + one file under app/<profile>.yaml
+appsByEnv:
+  nginx-scaled:
+    profile: "nginx-scaled"
+    namespace: "default"
+    syncWave: "1"
+
+  hello-job:
+    profile: "hello-job"
+    namespace: "default"
+    syncWave: "2"

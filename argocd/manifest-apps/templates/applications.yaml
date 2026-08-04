@@ -1,0 +1,72 @@
+{{- range $appName, $appConfig := .Values.appsByEnv }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ $.Values.env }}-{{ $.Values.name }}-{{ $appName }}
+  namespace: argocd
+  labels:
+    project: {{ $.Values.name }}
+    env: {{ $.Values.env }}
+    component: {{ $appName }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ quote $appConfig.syncWave }}
+spec:
+  project: {{ $.Values.project }}
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: main
+    path: template
+    helm:
+      releaseName: {{ $appName }}
+      valueFiles:
+        - ../app/{{ $appConfig.profile }}.yaml
+        - ../env/{{ $.Values.env }}.yaml
+      parameters:
+        - name: nameOverride
+          value: {{ $appName }}
+        - name: fullnameOverride
+          value: {{ $appName }}
+  destination:
+    {{- if eq $.Values.cluster "in-cluster" }}
+    server: https://kubernetes.default.svc
+    {{- else }}
+    name: {{ $.Values.cluster }}
+    {{- end }}
+    namespace: {{ $appConfig.namespace }}
+  syncPolicy:
+    {{- if eq (toString $.Values.automated) "true" }}
+    automated:
+      prune: true
+      selfHeal: true
+    {{- end }}
+    retry:
+      limit: 3
+      backoff:
+        duration: 15s
+        maxDuration: 2m
+        factor: 2
+    syncOptions:
+      - CreateNamespace=true
+  ignoreDifferences:
+    - group: kdop.kdop.io.vn
+      kind: DockerDeployment
+      jqPathExpressions:
+        - .status
+    - group: kdop.kdop.io.vn
+      kind: DockerService
+      jqPathExpressions:
+        - .status
+    - group: kdop.kdop.io.vn
+      kind: DockerJob
+      jqPathExpressions:
+        - .status
+    - group: kdop.kdop.io.vn
+      kind: DockerHost
+      jqPathExpressions:
+        - .status
+    - group: kdop.kdop.io.vn
+      kind: DockerContainer
+      jqPathExpressions:
+        - .status
+{{- end }}

@@ -1,0 +1,28 @@
+{{- if .Values.dockerDeployment.enabled }}
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerDeployment
+metadata:
+  name: {{ include "kdop.fullname" . }}
+spec:
+  replicas: {{ .Values.dockerDeployment.replicas }}
+  selector:
+    matchLabels:
+      {{- toYaml .Values.dockerDeployment.labels | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- toYaml .Values.dockerDeployment.labels | nindent 8 }}
+    spec:
+      image: {{ .Values.dockerDeployment.image | quote }}
+      containerName: {{ .Values.dockerDeployment.containerName | quote }}
+      restartPolicy: {{ .Values.dockerDeployment.restartPolicy | quote }}
+      dockerHostRef: {{ .Values.dockerDeployment.dockerHostRef | quote }}
+      {{- with .Values.dockerDeployment.command }}
+      command:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dockerDeployment.args }}
+      args:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,25 @@
+{{- if .Values.dockerJob.enabled }}
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerJob
+metadata:
+  name: {{ include "kdop.fullname" . }}
+spec:
+  image: {{ .Values.dockerJob.image | quote }}
+  restartPolicy: {{ .Values.dockerJob.restartPolicy | quote }}
+  dockerHostRef: {{ .Values.dockerJob.dockerHostRef | quote }}
+  backoffLimit: {{ .Values.dockerJob.backoffLimit }}
+  {{- with .Values.dockerJob.command }}
+  command:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.dockerJob.args }}
+  args:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if .Values.dockerJob.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ .Values.dockerJob.ttlSecondsAfterFinished }}
+  {{- end }}
+  {{- if .Values.dockerJob.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ .Values.dockerJob.activeDeadlineSeconds }}
+  {{- end }}
+{{- end }}

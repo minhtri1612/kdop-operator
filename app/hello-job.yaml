@@ -1,0 +1,21 @@
+# Profile: hello-job — one-shot DockerJob
+
+dockerHost:
+  enabled: false
+
+dockerDeployment:
+  enabled: false
+
+dockerService:
+  enabled: false
+
+dockerJob:
+  enabled: true
+  image: alpine:latest
+  command:
+    - echo
+    - "Hello from GitOps DockerJob"
+  restartPolicy: Never
+  dockerHostRef: dockerhost-sample
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 60

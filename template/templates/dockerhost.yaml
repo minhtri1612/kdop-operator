@@ -1,0 +1,8 @@
+{{- if .Values.dockerHost.enabled }}
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerHost
+metadata:
+  name: {{ .Values.dockerHost.name }}
+spec:
+  hostURL: {{ .Values.dockerHost.hostURL | quote }}
+{{- end }}

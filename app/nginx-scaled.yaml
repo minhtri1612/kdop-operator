@@ -1,0 +1,32 @@
+# Profile: nginx-scaled — DockerDeployment + DockerService (LB via selector)
+
+dockerHost:
+  enabled: true
+  name: dockerhost-sample
+  hostURL: tcp://docker-daemon.system.svc:2375
+
+dockerDeployment:
+  enabled: true
+  replicas: 2
+  labels:
+    app: nginx-scaled
+  image: nginx:latest
+  containerName: nginx-worker
+  restartPolicy: always
+  dockerHostRef: dockerhost-sample
+
+dockerService:
+  enabled: true
+  selector:
+    enabled: true
+    matchLabels:
+      app: nginx-scaled
+  containerRef: ""
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 80
+  networkMode: kind
+
+dockerJob:
+  enabled: false

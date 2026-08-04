@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kdop-workload
+description: Generic Helm chart that renders kdop Docker* CRs
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

@@ -1,0 +1,37 @@
+# Apply ONCE after ArgoCD is installed:
+#   kubectl apply -f argocd/bootstrap/00-root.yaml
+#
+# This parent Application renders argocd/manifest-apps → N child Applications.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kdop-apps-root
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/minhtri1612/kdop-operator.git
+    targetRevision: main
+    path: argocd/manifest-apps
+    helm:
+      parameters:
+        - name: env
+          value: dev
+        - name: project
+          value: default
+        - name: cluster
+          value: in-cluster
+        - name: automated
+          value: "true"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

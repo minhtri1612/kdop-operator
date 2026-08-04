@@ -1,0 +1,17 @@
+{{- if .Values.dockerService.enabled }}
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerService
+metadata:
+  name: {{ include "kdop.fullname" . }}
+spec:
+  {{- if and .Values.dockerService.selector.enabled (not .Values.dockerService.containerRef) }}
+  selector:
+    matchLabels:
+      {{- toYaml .Values.dockerService.selector.matchLabels | nindent 6 }}
+  {{- else if .Values.dockerService.containerRef }}
+  containerRef: {{ .Values.dockerService.containerRef | quote }}
+  {{- end }}
+  ports:
+    {{- toYaml .Values.dockerService.ports | nindent 4 }}
+  networkMode: {{ .Values.dockerService.networkMode | quote }}
+{{- end }}
