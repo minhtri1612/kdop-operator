@@ -63,8 +63,11 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
-        image: controller:latest
+        image: IMG_PLACEHOLDER
         name: manager
+        env:
+        - name: OPERATOR_IMAGE
+          value: IMG_PLACEHOLDER
         ports:
         - containerPort: 8081
           name: health
