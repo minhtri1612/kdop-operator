@@ -1,0 +1,20 @@
+# Test workload on friend's VPS (apply after DockerHost friend-vps = Connected).
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerDeployment
+metadata:
+  name: nginx-friend
+  namespace: system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-friend
+  template:
+    metadata:
+      labels:
+        app: nginx-friend
+    spec:
+      image: nginx:alpine
+      containerName: nginx-friend
+      restartPolicy: always
+      dockerHostRef: friend-vps

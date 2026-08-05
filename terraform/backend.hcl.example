@@ -1,0 +1,5 @@
+bucket         = "REPLACE_WITH_OUTPUT_bucket"
+key            = "control-plane/terraform.tfstate"
+region         = "ap-southeast-2"
+dynamodb_table = "REPLACE_WITH_OUTPUT_dynamodb_table"
+encrypt        = true
