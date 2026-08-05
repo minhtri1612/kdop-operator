@@ -6,6 +6,11 @@ instance_type  = "t3.medium"
 use_spot       = true
 root_volume_gb = 30
 
+# Fake remote Docker VPS for tunnel testing (optional)
+worker_enabled       = false
+worker_instance_type = "t3.small"
+worker_root_volume_gb = 20
+
 # Default: Session Manager only (no key pair, no port 22)
 enable_ssm = true
 enable_ssh = false

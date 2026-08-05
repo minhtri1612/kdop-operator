@@ -91,6 +91,36 @@ resource "aws_security_group" "control" {
   }
 }
 
+resource "aws_security_group" "worker" {
+  count = var.worker_enabled ? 1 : 0
+
+  name        = "${local.name}-worker-sg"
+  description = "kdop fake remote Docker VPS: SSM only, outbound tunnel client"
+  vpc_id      = aws_vpc.this.id
+
+  dynamic "ingress" {
+    for_each = var.enable_ssh ? [1] : []
+    content {
+      description = "SSH from admin"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = [local.admin_cidr]
+    }
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${local.name}-worker-sg"
+  }
+}
+
 resource "aws_iam_role" "ssm" {
   count = var.enable_ssm ? 1 : 0
 
@@ -175,6 +205,51 @@ resource "aws_instance" "control" {
 
   lifecycle {
     # ignore AMI drift only; allow user_data replace when bootstrap script changes
+    ignore_changes = [ami]
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.ssm_core]
+}
+
+resource "aws_instance" "worker" {
+  count = var.worker_enabled ? 1 : 0
+
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.worker_instance_type
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.worker[0].id]
+  key_name                    = local.resolved_key_name
+  iam_instance_profile        = var.enable_ssm ? aws_iam_instance_profile.ssm[0].name : null
+  associate_public_ip_address = true
+
+  root_block_device {
+    volume_type           = "gp3"
+    volume_size           = var.worker_root_volume_gb
+    delete_on_termination = true
+  }
+
+  user_data = templatefile("${path.module}/worker_user_data.sh", {
+    hostname = "${local.name}-worker"
+  })
+
+  dynamic "instance_market_options" {
+    for_each = var.use_spot ? [1] : []
+    content {
+      market_type = "spot"
+      spot_options {
+        spot_instance_type             = "one-time"
+        instance_interruption_behavior = "terminate"
+        max_price                      = var.spot_max_price != "" ? var.spot_max_price : null
+      }
+    }
+  }
+
+  tags = {
+    Name = "${local.name}-worker"
+    Role = "kdop-remote-docker-vps"
+  }
+
+  lifecycle {
     ignore_changes = [ami]
   }
 

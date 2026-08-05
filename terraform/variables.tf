@@ -16,6 +16,18 @@ variable "instance_type" {
   default     = "t3.medium"
 }
 
+variable "worker_enabled" {
+  description = "Create a second EC2 instance as a fake remote Docker VPS"
+  type        = bool
+  default     = false
+}
+
+variable "worker_instance_type" {
+  description = "EC2 instance type for the fake remote Docker VPS"
+  type        = string
+  default     = "t3.small"
+}
+
 variable "use_spot" {
   description = "Use Spot instance (cheaper, can be interrupted)"
   type        = bool
@@ -32,6 +44,12 @@ variable "root_volume_gb" {
   description = "Root gp3 volume size (GB)"
   type        = number
   default     = 30
+}
+
+variable "worker_root_volume_gb" {
+  description = "Root gp3 volume size (GB) for the fake remote Docker VPS"
+  type        = number
+  default     = 20
 }
 
 variable "admin_cidr" {
