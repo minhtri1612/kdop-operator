@@ -1,0 +1,159 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+
+permissions:
+  id-token: write   # OIDC → AWS
+  contents: read
+  pull-requests: write
+
+env:
+  TF_WORKING_DIR: terraform
+  AWS_REGION: ap-southeast-2
+  TF_VAR_enable_ssm: "true"
+  TF_VAR_enable_ssh: "false"
+  TF_VAR_admin_cidr: ${{ secrets.TF_ADMIN_CIDR }}
+
+jobs:
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.action == 'plan') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Write backend.hcl
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE }}
+        run: |
+          cat > backend.hcl <<EOF
+          bucket         = "${TF_STATE_BUCKET}"
+          key            = "control-plane/terraform.tfstate"
+          region         = "${AWS_REGION}"
+          dynamodb_table = "${TF_STATE_LOCK_TABLE}"
+          encrypt        = true
+          EOF
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform init -backend-config=backend.hcl -input=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        id: plan
+        run: |
+          terraform plan -input=false -no-color -out=tfplan \
+            -var="use_spot=true" \
+            -var="aws_region=${AWS_REGION}"
+          echo "PLAN_EXIT=$?" >> "$GITHUB_ENV"
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/tfplan
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            // lightweight notice — full plan is in Actions log / artifact
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '### Terraform Plan\nPlan finished. See workflow logs / `tfplan` artifact.\n\nApply runs on `main` (or workflow_dispatch → apply) after review.'
+            });
+
+  apply:
+    name: Terraform Apply
+    # On push to main: after plan. On manual apply: standalone.
+    needs: [plan]
+    if: |
+      always() &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+      )
+    runs-on: ubuntu-latest
+    environment: aws-prod
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Write backend.hcl
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE }}
+        run: |
+          cat > backend.hcl <<EOF
+          bucket         = "${TF_STATE_BUCKET}"
+          key            = "control-plane/terraform.tfstate"
+          region         = "${AWS_REGION}"
+          dynamodb_table = "${TF_STATE_LOCK_TABLE}"
+          encrypt        = true
+          EOF
+
+      - name: Terraform init
+        run: terraform init -backend-config=backend.hcl -input=false
+
+      - name: Terraform apply
+        run: |
+          terraform apply -input=false -auto-approve \
+            -var="use_spot=true" \
+            -var="aws_region=${AWS_REGION}"
