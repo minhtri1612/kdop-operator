@@ -51,7 +51,23 @@ var _ = Describe("DockerDeployment Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: kdopv1alpha1.DockerDeploymentSpec{
+						Selector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"app": "test-deployment",
+							},
+						},
+						Template: kdopv1alpha1.DockerContainerTemplate{
+							Metadata: kdopv1alpha1.ObjectMeta{
+								Labels: map[string]string{
+									"app": "test-deployment",
+								},
+							},
+							Spec: kdopv1alpha1.DockerContainerSpec{
+								Image: "nginx:alpine",
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

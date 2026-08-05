@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math/rand"
 	"sort"
 	"time"
@@ -60,7 +61,7 @@ func (r *DockerDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	if !deployment.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !deployment.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
 
@@ -80,7 +81,7 @@ func (r *DockerDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	if diff > 0 {
 		l.Info("Scaling up", "current", currentCount, "desired", replicas, "adding", diff)
-		for i := int32(0); i < diff; i++ {
+		for range diff {
 			newContainer, err := r.constructContainer(deployment)
 			if err != nil {
 				l.Error(err, "Failed to construct container")
@@ -95,7 +96,7 @@ func (r *DockerDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	} else if diff < 0 {
 		removeCount := int(-diff)
 		l.Info("Scaling down", "current", currentCount, "desired", replicas, "removing", removeCount)
-		for i := 0; i < removeCount; i++ {
+		for i := range removeCount {
 			victim := owned[len(owned)-1-i]
 			if err := r.Delete(ctx, &victim); err != nil {
 				l.Error(err, "Failed to delete container", "name", victim.Name)
@@ -115,7 +116,7 @@ func (r *DockerDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	names := make([]string, 0, len(owned))
 	for _, c := range owned {
 		names = append(names, c.Name)
-		if c.Status.State == "running" {
+		if c.Status.State == containerStateRunning {
 			available++
 		}
 	}
@@ -158,9 +159,7 @@ func (r *DockerDeploymentReconciler) constructContainer(deploy *kdopv1alpha1.Doc
 	name := fmt.Sprintf("%s-%s", deploy.Name, suffix)
 
 	labels := map[string]string{}
-	for k, v := range deploy.Spec.Template.Metadata.Labels {
-		labels[k] = v
-	}
+	maps.Copy(labels, deploy.Spec.Template.Metadata.Labels)
 
 	container := &kdopv1alpha1.DockerContainer{
 		ObjectMeta: metav1.ObjectMeta{

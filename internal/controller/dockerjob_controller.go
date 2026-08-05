@@ -72,7 +72,7 @@ func (r *DockerJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	defer func() { _ = cli.Close() }()
 
 	// 5.7 — Finalizer
-	if job.ObjectMeta.DeletionTimestamp.IsZero() {
+	if job.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(job, dockerJobFinalizer) {
 			controllerutil.AddFinalizer(job, dockerJobFinalizer)
 			if err := r.Update(ctx, job); err != nil {

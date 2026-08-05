@@ -142,11 +142,11 @@ func (r *DockerContainerReconciler) sync(ctx context.Context, cli dockerclient.A
 	}
 
 	state := match.State
-	if state != "running" {
+	if state != containerStateRunning {
 		if err := cli.ContainerStart(ctx, match.ID, container.StartOptions{}); err != nil {
 			return err
 		}
-		state = "running"
+		state = containerStateRunning
 	}
 
 	return r.writeStatus(ctx, cr, match.ID, state, inspect)
@@ -233,7 +233,7 @@ func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient
 	}
 
 	inspect, _ := cli.ContainerInspect(ctx, resp.ID)
-	return r.writeStatus(ctx, cr, resp.ID, "running", inspect)
+	return r.writeStatus(ctx, cr, resp.ID, containerStateRunning, inspect)
 }
 
 func (r *DockerContainerReconciler) writeStatus(ctx context.Context, cr *kdopv1alpha1.DockerContainer, id, state string, inspect types.ContainerJSON) error {

@@ -132,7 +132,7 @@ bump: ## Bump patch version in VERSION file
 
 .PHONY: docker-build
 docker-build: bump ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG_BASE}:$$(cat VERSION) .
+	$(CONTAINER_TOOL) build -t ${IMG_BASE}:$$(cat VERSION) -t ${IMG} .
 	$(CONTAINER_TOOL) tag ${IMG_BASE}:$$(cat VERSION) ${IMG_BASE}:latest
 
 .PHONY: docker-push

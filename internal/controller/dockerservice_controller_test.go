@@ -51,7 +51,15 @@ var _ = Describe("DockerService Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: kdopv1alpha1.DockerServiceSpec{
+						Ports: []kdopv1alpha1.ServicePort{
+							{
+								Name:       "http",
+								Port:       8080,
+								TargetPort: 80,
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
