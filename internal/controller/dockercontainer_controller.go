@@ -108,19 +108,15 @@ func (r *DockerContainerReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 }
 
 func (r *DockerContainerReconciler) sync(ctx context.Context, cli dockerclient.APIClient, cr *kdopv1alpha1.DockerContainer, name string) error {
-	want := "/" + name
-
 	list, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
 		return err
 	}
 
-	var match *types.Container
-	for i := range list {
-		if slices.Contains(list[i].Names, want) {
-			match = &list[i]
-			break
-		}
+	match := findContainerByName(list, name)
+
+	if managementModeFor(cr) == kdopv1alpha1.DockerContainerManagementModeObserve {
+		return r.observeRuntime(ctx, cli, cr, match)
 	}
 
 	if match == nil {
@@ -150,6 +146,43 @@ func (r *DockerContainerReconciler) sync(ctx context.Context, cli dockerclient.A
 	}
 
 	return r.writeStatus(ctx, cr, match.ID, state, inspect)
+}
+
+func findContainerByName(list []types.Container, name string) *types.Container {
+	want := "/" + name
+	for i := range list {
+		if slices.Contains(list[i].Names, want) {
+			return &list[i]
+		}
+	}
+	return nil
+}
+
+func (r *DockerContainerReconciler) observeRuntime(
+	ctx context.Context,
+	cli dockerclient.APIClient,
+	cr *kdopv1alpha1.DockerContainer,
+	match *types.Container,
+) error {
+	if match == nil {
+		cr.Status.ID = ""
+		cr.Status.State = dockerContainerMissing
+		cr.Status.IPv4 = ""
+		cr.Status.Health = ""
+		cr.Status.Adopted = true
+		cr.Status.ObservedSpecHash = ""
+		return r.Status().Update(ctx, cr)
+	}
+
+	inspect, err := cli.ContainerInspect(ctx, match.ID)
+	if err != nil {
+		return err
+	}
+
+	snapshot := runtimeSnapshotFromInspect(cr.Spec.DockerHostRef, *match, inspect)
+	cr.Status.Adopted = true
+	cr.Status.ObservedSpecHash = observedSpecHash(snapshot.Spec)
+	return r.writeStatus(ctx, cr, match.ID, match.State, inspect)
 }
 
 func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient.APIClient, cr *kdopv1alpha1.DockerContainer, name string) error {
@@ -262,6 +295,10 @@ func (r *DockerContainerReconciler) deleteExternalResources(
 	name string,
 ) error {
 	log := logf.FromContext(ctx)
+
+	if shouldSkipRuntimeDeletion(cr) {
+		return nil
+	}
 
 	// 1. Main container
 	if err := cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil && !dockerclient.IsErrNotFound(err) {

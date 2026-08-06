@@ -18,8 +18,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/docker/docker/client"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,6 +41,8 @@ type DockerHostReconciler struct {
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerhosts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerhosts/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockerhosts/finalizers,verbs=update
+// +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockercontainers,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=kdop.kdop.io.vn,resources=dockercontainers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 func (r *DockerHostReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -75,7 +80,93 @@ func (r *DockerHostReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	}
 
+	if phase == "Connected" {
+		if err := r.discoverAdoptableContainers(ctx, cli, host); err != nil {
+			log.Error(err, "discover adoptable containers failed", "host", host.Name)
+		}
+	}
+
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+func (r *DockerHostReconciler) discoverAdoptableContainers(
+	ctx context.Context,
+	cli dockerclient.APIClient,
+	host *kdopv1alpha1.DockerHost,
+) error {
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return err
+	}
+
+	for i := range containers {
+		summary := containers[i]
+		if summary.Labels[adoptLabelKey] != adoptLabelValue {
+			continue
+		}
+
+		inspect, err := cli.ContainerInspect(ctx, summary.ID)
+		if err != nil {
+			return err
+		}
+
+		snapshot := runtimeSnapshotFromInspect(host.Name, summary, inspect)
+		if err := r.upsertAdoptedContainer(ctx, host, snapshot); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *DockerHostReconciler) upsertAdoptedContainer(
+	ctx context.Context,
+	host *kdopv1alpha1.DockerHost,
+	snapshot runtimeContainerSnapshot,
+) error {
+	var existingList kdopv1alpha1.DockerContainerList
+	if err := r.List(ctx, &existingList, client.InNamespace(host.Namespace)); err != nil {
+		return err
+	}
+
+	for i := range existingList.Items {
+		existing := &existingList.Items[i]
+		if existing.Spec.DockerHostRef == host.Name && existing.Spec.ContainerName == snapshot.Name {
+			changed := false
+			specHash := observedSpecHash(snapshot.Spec)
+			if existing.Labels == nil {
+				existing.Labels = map[string]string{}
+			}
+			if existing.Annotations == nil {
+				existing.Annotations = map[string]string{}
+			}
+			if existing.Labels[managedByLabelKey] != managedByAdoptValue {
+				existing.Labels[managedByLabelKey] = managedByAdoptValue
+				changed = true
+			}
+			adoptedFrom := fmt.Sprintf("%s/%s", host.Name, snapshot.ID)
+			if existing.Annotations[adoptedFromAnnotationKey] != adoptedFrom {
+				existing.Annotations[adoptedFromAnnotationKey] = adoptedFrom
+				changed = true
+			}
+			if changed {
+				if err := r.Update(ctx, existing); err != nil {
+					return err
+				}
+			}
+			if !existing.Status.Adopted || existing.Status.ObservedSpecHash != specHash {
+				existing.Status.Adopted = true
+				existing.Status.ObservedSpecHash = specHash
+				if err := r.Status().Update(ctx, existing); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
+
+	adopted := buildAdoptedDockerContainer(host.Namespace, host, snapshot)
+	return r.Create(ctx, adopted)
 }
 
 // SetupWithManager sets up the controller with the Manager.

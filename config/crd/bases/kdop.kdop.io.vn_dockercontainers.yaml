@@ -131,6 +131,14 @@ spec:
                   ImagePullSecret is a Secret with keys username, password, server
                   used to authenticate private registry pulls.
                 type: string
+              managementMode:
+                description: |-
+                  ManagementMode controls whether the operator only observes runtime state
+                  or actively reconciles the container toward the desired spec.
+                enum:
+                - Observe
+                - Enforce
+                type: string
               ports:
                 items:
                   type: string
@@ -198,6 +206,10 @@ spec:
           status:
             description: status defines the observed state of DockerContainer
             properties:
+              adopted:
+                description: Adopted reports whether this CR was initially claimed
+                  from an existing runtime container.
+                type: boolean
               health:
                 description: 'Health: healthy | unhealthy | starting | none'
                 type: string
@@ -206,6 +218,10 @@ spec:
                 type: string
               ipv4:
                 description: IPv4 on the Docker network (optional, phase sau tunnel)
+                type: string
+              observedSpecHash:
+                description: ObservedSpecHash is a hash of the last runtime-derived
+                  spec snapshot.
                 type: string
               state:
                 description: 'State: running | exited | created | ...'

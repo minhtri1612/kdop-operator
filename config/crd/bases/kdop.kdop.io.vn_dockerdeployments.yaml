@@ -208,6 +208,14 @@ spec:
                           ImagePullSecret is a Secret with keys username, password, server
                           used to authenticate private registry pulls.
                         type: string
+                      managementMode:
+                        description: |-
+                          ManagementMode controls whether the operator only observes runtime state
+                          or actively reconciles the container toward the desired spec.
+                        enum:
+                        - Observe
+                        - Enforce
+                        type: string
                       ports:
                         items:
                           type: string

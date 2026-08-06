@@ -74,6 +74,12 @@ type DockerContainerSpec struct {
 	// Command overrides the image ENTRYPOINT/CMD.
 	// +optional
 	Command []string `json:"command,omitempty"`
+
+	// ManagementMode controls whether the operator only observes runtime state
+	// or actively reconciles the container toward the desired spec.
+	// +kubebuilder:validation:Enum=Observe;Enforce
+	// +optional
+	ManagementMode string `json:"managementMode,omitempty"`
 }
 
 // DockerContainerStatus defines the observed state of DockerContainer
@@ -86,7 +92,18 @@ type DockerContainerStatus struct {
 	IPv4 string `json:"ipv4,omitempty"`
 	// Health: healthy | unhealthy | starting | none
 	Health string `json:"health,omitempty"`
+	// Adopted reports whether this CR was initially claimed from an existing runtime container.
+	Adopted bool `json:"adopted,omitempty"`
+	// ObservedSpecHash is a hash of the last runtime-derived spec snapshot.
+	ObservedSpecHash string `json:"observedSpecHash,omitempty"`
 }
+
+type DockerContainerManagementMode string
+
+const (
+	DockerContainerManagementModeObserve DockerContainerManagementMode = "Observe"
+	DockerContainerManagementModeEnforce DockerContainerManagementMode = "Enforce"
+)
 
 // HealthCheckConfig defines Docker health check parameters.
 type HealthCheckConfig struct {
