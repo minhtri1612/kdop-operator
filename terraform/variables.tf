@@ -64,6 +64,12 @@ variable "gateway_cidrs" {
   default     = ["0.0.0.0/0"]
 }
 
+variable "argocd_cidrs" {
+  description = "CIDRs allowed to reach ArgoCD UI on host port 8080 (port-forward)"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 variable "enable_ssm" {
   description = "Attach IAM instance profile for AWS Systems Manager Session Manager (no SSH key needed)"
   type        = bool

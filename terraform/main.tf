@@ -79,6 +79,15 @@ resource "aws_security_group" "control" {
     cidr_blocks = var.gateway_cidrs
   }
 
+  # ArgoCD UI via kubectl port-forward --address 0.0.0.0 :8080
+  ingress {
+    description = "ArgoCD UI (port-forward)"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = var.argocd_cidrs
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
