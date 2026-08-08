@@ -37,6 +37,10 @@ jobs:
   plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.action == 'plan') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     defaults:
       run:
@@ -49,7 +53,10 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: gha-kdop-terraform-plan
           aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+          role-skip-session-tagging: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -118,6 +125,9 @@ jobs:
       )
     runs-on: ubuntu-latest
     environment: aws-prod
+    permissions:
+      id-token: write
+      contents: read
     defaults:
       run:
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -129,7 +139,10 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: gha-kdop-terraform-apply
           aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+          role-skip-session-tagging: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
