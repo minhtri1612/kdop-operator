@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Fix GitHub Actions OIDC trust: TagSession + correct thumbprints/audience.
+# OPEN_TRUST=1 → temporarily allow any GitHub OIDC token (debug only).
+# Default → restore restricted trust for minhtri1612/kdop-operator.
 set -euo pipefail
 
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
 ROLE_NAME="${ROLE_NAME:-github-actions-kdop-terraform}"
 REPO="${GITHUB_REPO:-minhtri1612/kdop-operator}"
 PROVIDER_ARN="arn:aws:iam::${ACCOUNT}:oidc-provider/token.actions.githubusercontent.com"
-ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/${ROLE_NAME}"
+OPEN_TRUST="${OPEN_TRUST:-0}"
 
 THUMBPRINTS=(
   "6938fd4d98bab03faadb97b34396831e3780aea1"
   "1c58a3a8518e8759bf075b76b750d4f2df264fcd"
 )
 
-echo "==> Account ${ACCOUNT}"
 aws iam update-open-id-connect-provider-thumbprint \
   --open-id-connect-provider-arn "${PROVIDER_ARN}" \
   --thumbprint-list "${THUMBPRINTS[@]}" || true
@@ -27,21 +27,31 @@ if [[ " ${CLIENT_IDS} " != *" sts.amazonaws.com "* ]]; then
     --client-id sts.amazonaws.com
 fi
 
-echo "==> Updating trust policy (AssumeRoleWithWebIdentity + TagSession)..."
 TRUST_FILE="$(mktemp)"
-cat >"${TRUST_FILE}" <<EOF
+if [[ "${OPEN_TRUST}" == "1" ]]; then
+  echo "==> OPEN trust (DEBUG ONLY — no sub/aud conditions)"
+  cat >"${TRUST_FILE}" <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [
     {
       "Effect": "Allow",
-      "Principal": {
-        "Federated": "${PROVIDER_ARN}"
-      },
-      "Action": [
-        "sts:AssumeRoleWithWebIdentity",
-        "sts:TagSession"
-      ],
+      "Principal": { "Federated": "${PROVIDER_ARN}" },
+      "Action": ["sts:AssumeRoleWithWebIdentity", "sts:TagSession"]
+    }
+  ]
+}
+EOF
+else
+  echo "==> Restricted trust for repo:${REPO}:*"
+  cat >"${TRUST_FILE}" <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Federated": "${PROVIDER_ARN}" },
+      "Action": ["sts:AssumeRoleWithWebIdentity", "sts:TagSession"],
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
@@ -54,6 +64,8 @@ cat >"${TRUST_FILE}" <<EOF
   ]
 }
 EOF
+fi
+
 aws iam update-assume-role-policy \
   --role-name "${ROLE_NAME}" \
   --policy-document "file://${TRUST_FILE}"
@@ -62,8 +74,9 @@ rm -f "${TRUST_FILE}"
 aws iam get-role --role-name "${ROLE_NAME}" \
   --query 'Role.AssumeRolePolicyDocument' --output json
 
-gh secret set AWS_ROLE_ARN -R "${REPO}" --body "${ROLE_ARN}"
-
 echo
-echo "Done. Re-run:"
+echo "Next: push workflow if needed, then:"
 echo "  gh workflow run terraform.yml -R ${REPO} -f action=plan"
+if [[ "${OPEN_TRUST}" == "1" ]]; then
+  echo "IMPORTANT: after test, run without OPEN_TRUST=1 to lock trust again."
+fi

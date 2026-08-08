@@ -49,10 +49,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug OIDC token claims
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com')
+            const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString())
+            core.info(JSON.stringify({
+              iss: payload.iss,
+              aud: payload.aud,
+              sub: payload.sub,
+              repository: payload.repository,
+              ref: payload.ref,
+              workflow_ref: payload.workflow_ref,
+            }, null, 2))
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          # Hardcode ARN temporarily to rule out secret formatting issues
+          role-to-assume: arn:aws:iam::629954427603:role/github-actions-kdop-terraform
           role-session-name: gha-kdop-terraform-plan
           aws-region: ${{ env.AWS_REGION }}
           audience: sts.amazonaws.com
