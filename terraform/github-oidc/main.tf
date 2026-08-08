@@ -75,7 +75,11 @@ resource "aws_iam_role" "github_actions" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:*"
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repository}:*",
+            "repo:minhtri1612@*/kdop-operator@*:*",
+            "repo:minhtri1612@156641195/kdop-operator@1306688297:*",
+          ]
         }
       }
     }]
