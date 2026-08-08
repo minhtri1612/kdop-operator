@@ -41,6 +41,12 @@ resource "aws_iam_policy" "terraform" {
           "iam:PassRole",
           "iam:AttachRolePolicy",
           "iam:DetachRolePolicy",
+          "iam:ListAttachedRolePolicies",
+          "iam:ListRolePolicies",
+          "iam:GetRolePolicy",
+          "iam:PutRolePolicy",
+          "iam:DeleteRolePolicy",
+          "iam:UpdateAssumeRolePolicy",
           "iam:CreateInstanceProfile",
           "iam:DeleteInstanceProfile",
           "iam:AddRoleToInstanceProfile",
@@ -48,7 +54,9 @@ resource "aws_iam_policy" "terraform" {
           "iam:GetInstanceProfile",
           "iam:ListInstanceProfilesForRole",
           "iam:TagRole",
+          "iam:UntagRole",
           "iam:TagInstanceProfile",
+          "iam:UntagInstanceProfile",
         ]
         Resource = "*"
       },
@@ -75,7 +83,11 @@ resource "aws_iam_role" "github_actions" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:*"
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repository}:*",
+            "repo:minhtri1612@*/kdop-operator@*:*",
+            "repo:minhtri1612@156641195/kdop-operator@1306688297:*",
+          ]
         }
       }
     }]
