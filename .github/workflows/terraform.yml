@@ -32,7 +32,7 @@ env:
   TF_VAR_enable_ssm: "true"
   TF_VAR_enable_ssh: "false"
   TF_VAR_admin_cidr: ${{ secrets.TF_ADMIN_CIDR }}
-  # false = no fake remote Docker VPS
+  # false = no fake remote Docker VPS (destroy worker EC2 to save cost)
   TF_VAR_worker_enabled: "false"
 
 jobs:
