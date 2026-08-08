@@ -32,8 +32,8 @@ env:
   TF_VAR_enable_ssm: "true"
   TF_VAR_enable_ssh: "false"
   TF_VAR_admin_cidr: ${{ secrets.TF_ADMIN_CIDR }}
-  # Omitting this destroys aws_instance.worker (default worker_enabled=false)
-  TF_VAR_worker_enabled: "true"
+  # false = no fake remote Docker VPS
+  TF_VAR_worker_enabled: "false"
 
 jobs:
   plan:
