@@ -17,3 +17,13 @@ appsByEnv:
     profile: "hello-job"
     namespace: "default"
     syncWave: "2"
+
+  food-backend:
+    profile: "food-backend"
+    namespace: "system"
+    syncWave: "3"
+
+  mysql-db:
+    profile: "mysql-db"
+    namespace: "system"
+    syncWave: "3"

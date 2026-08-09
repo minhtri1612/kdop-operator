@@ -1,0 +1,23 @@
+# Profile: food-backend — Observe DockerContainer on friend-vps
+
+dockerHost:
+  enabled: false
+
+dockerDeployment:
+  enabled: false
+
+dockerService:
+  enabled: false
+
+dockerJob:
+  enabled: false
+
+dockerContainer:
+  enabled: true
+  image: food_order_website-backend
+  containerName: food-backend
+  dockerHostRef: friend-vps
+  restartPolicy: always
+  managementMode: Observe
+  ports:
+    - "3001:3000"
