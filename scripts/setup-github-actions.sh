@@ -7,6 +7,21 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GITHUB_REPO="${GITHUB_REPO:-minhtri1612/kdop-operator}"
 TF_ADMIN_CIDR="${TF_ADMIN_CIDR:-}"
+AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+OIDC_PROVIDER_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+
+echo "==> Ensuring OIDC provider audience includes sts.amazonaws.com..."
+CLIENT_IDS="$(aws iam get-open-id-connect-provider \
+  --open-id-connect-provider-arn "${OIDC_PROVIDER_ARN}" \
+  --query 'ClientIDList' --output text 2>/dev/null || true)"
+if [[ " ${CLIENT_IDS} " != *" sts.amazonaws.com "* ]]; then
+  echo "Adding client ID sts.amazonaws.com to OIDC provider..."
+  aws iam add-client-id-to-open-id-connect-provider \
+    --open-id-connect-provider-arn "${OIDC_PROVIDER_ARN}" \
+    --client-id sts.amazonaws.com
+else
+  echo "OIDC ClientIDList already has sts.amazonaws.com"
+fi
 
 echo "==> Applying terraform/github-oidc (IAM policy + role)..."
 cd "${ROOT}/terraform/github-oidc"
@@ -42,6 +57,6 @@ Done.
   State bucket: ${BUCKET}
   Lock table:   ${LOCK_TABLE}
 
-Next: push terraform/ + .github/workflows/terraform.yml → Actions → Terraform workflow.
+Next: Actions → Terraform → Run workflow → plan
 
 EOF

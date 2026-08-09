@@ -139,13 +139,15 @@ jobs:
 
   apply:
     name: Terraform Apply
-    # On push to main: after plan. On manual apply: standalone.
+    # Push to main: wait for a successful plan.
+    # Manual apply: plan job is skipped (its if only allows action=plan); allow apply when plan is skipped.
+    # always() is required so a skipped needed job does not auto-skip apply.
     needs: [plan]
     if: |
-      always() &&
+      always() && !cancelled() &&
       (
         (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.result == 'success') ||
-        (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+        (github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && needs.plan.result == 'skipped')
       )
     runs-on: ubuntu-latest
     environment: aws-prod
