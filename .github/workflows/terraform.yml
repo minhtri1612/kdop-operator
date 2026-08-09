@@ -20,6 +20,11 @@ on:
         options:
           - plan
           - apply
+      worker_enabled:
+        description: "Fake remote Docker VPS worker EC2 (false = destroy if exists)"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   id-token: write   # OIDC → AWS
@@ -32,8 +37,9 @@ env:
   TF_VAR_enable_ssm: "true"
   TF_VAR_enable_ssh: "false"
   TF_VAR_admin_cidr: ${{ secrets.TF_ADMIN_CIDR }}
-  # false = no fake remote Docker VPS (destroy worker EC2 to save cost)
-  TF_VAR_worker_enabled: "false"
+  # Manual run: workflow_dispatch checkbox (format so false does not fall through).
+  # Push/PR: repo variable WORKER_ENABLED, else false.
+  TF_VAR_worker_enabled: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.worker_enabled) || vars.WORKER_ENABLED || 'false' }}
 
 jobs:
   plan:
