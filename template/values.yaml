@@ -45,3 +45,15 @@ dockerJob:
   backoffLimit: 0
   ttlSecondsAfterFinished: null
   activeDeadlineSeconds: null
+
+dockerContainer:
+  enabled: false
+  image: nginx:latest
+  containerName: ""
+  dockerHostRef: dockerhost-sample
+  restartPolicy: always
+  managementMode: ""
+  ports: []
+  env: []
+  envVars: []
+  command: []

@@ -1,0 +1,40 @@
+{{- if .Values.dockerContainer.enabled }}
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerContainer
+metadata:
+  name: {{ include "kdop.fullname" . }}
+spec:
+  image: {{ .Values.dockerContainer.image | quote }}
+  {{- if .Values.dockerContainer.containerName }}
+  containerName: {{ .Values.dockerContainer.containerName | quote }}
+  {{- end }}
+  {{- if .Values.dockerContainer.dockerHostRef }}
+  dockerHostRef: {{ .Values.dockerContainer.dockerHostRef | quote }}
+  {{- end }}
+  {{- if .Values.dockerContainer.restartPolicy }}
+  restartPolicy: {{ .Values.dockerContainer.restartPolicy | quote }}
+  {{- end }}
+  {{- if .Values.dockerContainer.managementMode }}
+  managementMode: {{ .Values.dockerContainer.managementMode | quote }}
+  {{- end }}
+  {{- with .Values.dockerContainer.ports }}
+  ports:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.dockerContainer.env }}
+  env:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.dockerContainer.envVars }}
+  envVars:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.dockerContainer.command }}
+  command:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

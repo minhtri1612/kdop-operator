@@ -1,0 +1,44 @@
+# Profile: mysql-db — Observe DockerContainer on friend-vps
+
+dockerHost:
+  enabled: false
+
+dockerDeployment:
+  enabled: false
+
+dockerService:
+  enabled: false
+
+dockerJob:
+  enabled: false
+
+dockerContainer:
+  enabled: true
+  image: mysql:8
+  containerName: mysql-db
+  dockerHostRef: friend-vps
+  restartPolicy: always
+  managementMode: Observe
+  ports:
+    - "3307:3306"
+  envVars:
+    - name: MYSQL_ROOT_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: food-mysql
+          key: MYSQL_ROOT_PASSWORD
+    - name: MYSQL_DATABASE
+      valueFrom:
+        secretKeyRef:
+          name: food-mysql
+          key: MYSQL_DATABASE
+    - name: MYSQL_USER
+      valueFrom:
+        secretKeyRef:
+          name: food-mysql
+          key: MYSQL_USER
+    - name: MYSQL_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: food-mysql
+          key: MYSQL_PASSWORD
