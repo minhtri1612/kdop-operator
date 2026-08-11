@@ -1,136 +1,130 @@
 # kdop-operator
-// TODO(user): Add simple overview of use/purpose
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+**Manage Docker on any host from Kubernetes — without installing kubelet on the edge.**
 
-## Getting Started
+Turn a VPS, laptop, Raspberry Pi, or `t3.micro` into a managed Docker runner. Define workloads as YAML, sync with Argo CD, and let the operator reconcile containers over a reverse tunnel.
 
-### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
-
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
-
-```sh
-make docker-build docker-push IMG=<some-registry>/kdop-operator:tag
+```
+Git (app/*.yaml)  →  Argo CD  →  DockerContainer / DockerDeployment CRDs
+                                      ↓
+                              kdop-operator (control plane)
+                                      ↓
+                         reverse tunnel (edge dials OUT)
+                                      ↓
+                            Docker Engine on the host
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+## Why this exists
 
-**Install the CRDs into the cluster:**
+| Pain | What kdop does |
+| :--- | :--- |
+| Edge nodes can't run full Kubernetes | Only Docker + a tiny tunnel client |
+| kubelet burns RAM on small boxes | No kubelet / kube-proxy on the edge |
+| Legacy compose apps don't fit GitOps | Same CRDs + Argo CD as in-cluster apps |
+| Firewalls block inbound Docker API | Edge dials **out** to the control plane |
 
-```sh
-make install
+### 1. “Serverless-like” on your own metal
+
+- Treat the machine as a dumb **Docker runner** — you don't manage OS orchestration on the edge.
+- Avoid the ~500MB+ tax of joining the cluster as a node. Fits cheap VMs and Pis.
+- **GitOps everything**: declare Docker apps in YAML, manage them with Argo CD like any other app.
+
+### 2. Remote Docker via reverse tunnel
+
+- No inbound ports on the friend/VPS network.
+- Tunnel client on the host → NodePort gateway on the control plane → operator talks Docker API.
+
+### 3. Adopt what already runs
+
+- Label an existing container `kdop.io/adopt=true` → operator creates a `DockerContainer` in **Observe** mode (status only).
+- Flip to **Enforce** (or declare the app in Git) when you want the operator to reconcile runtime to the desired spec.
+
+## Features
+
+| Feature | Description |
+| :--- | :--- |
+| **Multi-host** | `DockerHost` CR → unix socket or TCP (often via tunnel) |
+| **Lifecycle** | Image, ports, env, volumes, restart, secrets |
+| **Deployments & jobs** | `DockerDeployment` (replicas) and `DockerJob` (one-shot) |
+| **GitOps** | Helm `template/` + `app/*.yaml` + Argo CD Applications |
+| **Adopt / Observe / Enforce** | Import running containers; observe or fully reconcile |
+| **Tunnel gateway** | Central NodePort; edge opens outbound only |
+
+## Quick start
+
+```bash
+# Control plane (Kind / existing cluster)
+./scripts/kind-quickstart.sh
+# or: kubectl apply -f install/install.yaml
+
+# Remote host: tunnel client (edge dials out)
+# See scripts/vps-tunnel-client.sh and install/remote-host.yaml
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+GitOps layout (after Argo CD is installed):
 
-```sh
-make deploy IMG=<some-registry>/kdop-operator:tag
+```text
+argocd/bootstrap/00-root.yaml   # parent Application (apply once)
+argocd/manifest-apps/           # generates one Application per app
+template/                       # Helm → Docker* CRs
+app/                            # per-workload values (nginx, food, …)
+env/                            # shared env overlays
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
-kubectl apply -k config/samples/
+```bash
+kubectl apply -f argocd/bootstrap/00-root.yaml
+# Edit app/food-backend.yaml → git push → Argo CD syncs
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+Details: [argocd/README.md](argocd/README.md) · infra notes: [terraform/README.md](terraform/README.md)
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+## Example: container on a remote host
 
-```sh
-kubectl delete -k config/samples/
+```yaml
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerContainer
+metadata:
+  name: food-backend
+  namespace: system
+spec:
+  image: food_order_website-backend
+  containerName: food-backend
+  dockerHostRef: friend-vps
+  managementMode: Observe   # or Enforce
+  ports:
+    - "3001:3000"
+  restartPolicy: always
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+More samples: `config/samples/`, `examples/`, `app/`.
 
-```sh
-make uninstall
+## CRDs at a glance
+
+| Kind | Role |
+| :--- | :--- |
+| `DockerHost` | Connection to a Docker daemon |
+| `DockerContainer` | Single container (GitOps + adopt) |
+| `DockerDeployment` | Replicated containers + labels |
+| `DockerService` | Expose containers into the cluster (tunnel) |
+| `DockerJob` | One-shot task with backoff / TTL |
+
+## Development
+
+```bash
+make manifests generate
+make test
+make docker-build IMG=kdop-operator:dev
+make deploy IMG=kdop-operator:dev
 ```
 
-**UnDeploy the controller from the cluster:**
+Requires Go 1.24+, Docker, kubectl, and a cluster (Kind is fine).
 
-```sh
-make undeploy
+```bash
+make help   # all targets
 ```
-
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/kdop-operator:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/kdop-operator/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
 
 ## License
 
 Copyright 2026.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
-# kdop-operator
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) if present, or the Apache 2.0 terms at https://www.apache.org/licenses/LICENSE-2.0
