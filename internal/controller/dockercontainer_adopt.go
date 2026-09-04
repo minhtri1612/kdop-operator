@@ -54,10 +54,27 @@ type runtimeContainerSnapshot struct {
 }
 
 func managementModeFor(cr *kdopv1alpha1.DockerContainer) kdopv1alpha1.DockerContainerManagementMode {
-	if cr.Spec.ManagementMode == string(kdopv1alpha1.DockerContainerManagementModeObserve) {
+	switch cr.Spec.ManagementMode {
+	case string(kdopv1alpha1.DockerContainerManagementModeEnforce):
+		return kdopv1alpha1.DockerContainerManagementModeEnforce
+	case string(kdopv1alpha1.DockerContainerManagementModeObserve):
+		return kdopv1alpha1.DockerContainerManagementModeObserve
+	default:
+		if ownedByDockerDeployment(cr) {
+			return kdopv1alpha1.DockerContainerManagementModeEnforce
+		}
 		return kdopv1alpha1.DockerContainerManagementModeObserve
 	}
-	return kdopv1alpha1.DockerContainerManagementModeEnforce
+}
+
+func ownedByDockerDeployment(cr *kdopv1alpha1.DockerContainer) bool {
+	for i := range cr.OwnerReferences {
+		ref := cr.OwnerReferences[i]
+		if ref.Kind == "DockerDeployment" && ref.Controller != nil && *ref.Controller {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldSkipRuntimeDeletion(cr *kdopv1alpha1.DockerContainer) bool {

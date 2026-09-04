@@ -1,0 +1,58 @@
+# Attach food_order compose containers on friend-vps to kdop (Enforce).
+# Apply from the control plane after DockerHost friend-vps is Connected:
+#   kubectl apply -f examples/food-friend-vps.yaml
+#
+# Image/ports/network match the running compose stack so the operator
+# reuses the existing containers instead of recreating them.
+# After this, do not docker compose up/down food-backend / mysql-db.
+---
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerContainer
+metadata:
+  name: mysql-db
+  namespace: system
+spec:
+  image: mysql:8.0
+  containerName: mysql-db
+  dockerHostRef: friend-vps
+  restartPolicy: always
+  managementMode: Enforce
+  networkMode: food_order_website_default
+  ports:
+    - "3307:3306"
+  envVars:
+    - name: MYSQL_ROOT_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: food-mysql
+          key: MYSQL_ROOT_PASSWORD
+    - name: MYSQL_DATABASE
+      valueFrom:
+        secretKeyRef:
+          name: food-mysql
+          key: MYSQL_DATABASE
+    - name: MYSQL_USER
+      valueFrom:
+        secretKeyRef:
+          name: food-mysql
+          key: MYSQL_USER
+    - name: MYSQL_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: food-mysql
+          key: MYSQL_PASSWORD
+---
+apiVersion: kdop.kdop.io.vn/v1alpha1
+kind: DockerContainer
+metadata:
+  name: food-backend
+  namespace: system
+spec:
+  image: food_order_website-backend
+  containerName: food-backend
+  dockerHostRef: friend-vps
+  restartPolicy: always
+  managementMode: Enforce
+  networkMode: food_order_website_default
+  ports:
+    - "3001:3000"

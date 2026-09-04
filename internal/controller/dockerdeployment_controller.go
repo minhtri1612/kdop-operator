@@ -180,6 +180,10 @@ func (r *DockerDeploymentReconciler) constructContainer(deploy *kdopv1alpha1.Doc
 		container.Spec.ContainerName = fmt.Sprintf("%s-%s", container.Spec.ContainerName, suffix)
 	}
 
+	if container.Spec.ManagementMode == "" {
+		container.Spec.ManagementMode = string(kdopv1alpha1.DockerContainerManagementModeEnforce)
+	}
+
 	return container, nil
 }
 

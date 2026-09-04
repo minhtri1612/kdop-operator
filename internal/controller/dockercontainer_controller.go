@@ -245,6 +245,7 @@ func (r *DockerContainerReconciler) create(ctx context.Context, cli dockerclient
 			RestartPolicy: container.RestartPolicy{
 				Name: container.RestartPolicyMode(strings.ToLower(policy)),
 			},
+			NetworkMode:  container.NetworkMode(cr.Spec.NetworkMode),
 			PortBindings: bindings,
 			Binds:        binds,
 			Resources:    buildDockerResources(cr.Spec.Resources),
