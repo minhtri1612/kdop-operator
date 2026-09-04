@@ -14,8 +14,9 @@ spec:
   {{- if .Values.dockerContainer.restartPolicy }}
   restartPolicy: {{ .Values.dockerContainer.restartPolicy | quote }}
   {{- end }}
-  {{- if .Values.dockerContainer.managementMode }}
-  managementMode: {{ .Values.dockerContainer.managementMode | quote }}
+  managementMode: {{ .Values.dockerContainer.managementMode | default "Observe" | quote }}
+  {{- if .Values.dockerContainer.networkMode }}
+  networkMode: {{ .Values.dockerContainer.networkMode | quote }}
   {{- end }}
   {{- with .Values.dockerContainer.ports }}
   ports:
@@ -35,6 +36,10 @@ spec:
   {{- end }}
   {{- with .Values.dockerContainer.command }}
   command:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.dockerContainer.volumeMounts }}
+  volumeMounts:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 {{- end }}

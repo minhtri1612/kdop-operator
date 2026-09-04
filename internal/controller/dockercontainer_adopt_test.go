@@ -195,6 +195,56 @@ func TestUpsertAdoptedContainerCreatesOnceAndUpdatesStatus(t *testing.T) {
 	}
 }
 
+func TestManagementModeForDefaultsToObserve(t *testing.T) {
+	observe := &kdopv1alpha1.DockerContainer{
+		Spec: kdopv1alpha1.DockerContainerSpec{
+			ManagementMode: string(kdopv1alpha1.DockerContainerManagementModeObserve),
+		},
+	}
+	if got := managementModeFor(observe); got != kdopv1alpha1.DockerContainerManagementModeObserve {
+		t.Fatalf("Observe CR: got %q", got)
+	}
+
+	empty := &kdopv1alpha1.DockerContainer{}
+	if got := managementModeFor(empty); got != kdopv1alpha1.DockerContainerManagementModeObserve {
+		t.Fatalf("empty standalone managementMode should Observe, got %q", got)
+	}
+
+	enforce := &kdopv1alpha1.DockerContainer{
+		Spec: kdopv1alpha1.DockerContainerSpec{
+			ManagementMode: string(kdopv1alpha1.DockerContainerManagementModeEnforce),
+		},
+	}
+	if got := managementModeFor(enforce); got != kdopv1alpha1.DockerContainerManagementModeEnforce {
+		t.Fatalf("Enforce CR: got %q", got)
+	}
+
+	controlled := true
+	child := &kdopv1alpha1.DockerContainer{
+		ObjectMeta: metav1.ObjectMeta{
+			OwnerReferences: []metav1.OwnerReference{{
+				Kind:       "DockerDeployment",
+				Controller: &controlled,
+			}},
+		},
+	}
+	if got := managementModeFor(child); got != kdopv1alpha1.DockerContainerManagementModeEnforce {
+		t.Fatalf("deployment-owned empty mode should Enforce, got %q", got)
+	}
+}
+
+func TestNeedsRecreateImageMismatch(t *testing.T) {
+	inspect := types.ContainerJSON{
+		Config: &container.Config{Image: "mysql:8.0"},
+	}
+	if needsRecreate(inspect, &kdopv1alpha1.DockerContainerSpec{Image: "mysql:8.0"}) {
+		t.Fatal("matching image should not recreate")
+	}
+	if !needsRecreate(inspect, &kdopv1alpha1.DockerContainerSpec{Image: "mysql:8"}) {
+		t.Fatal("image tag mismatch should recreate")
+	}
+}
+
 func TestShouldSkipRuntimeDeletion(t *testing.T) {
 	cr := &kdopv1alpha1.DockerContainer{
 		Spec: kdopv1alpha1.DockerContainerSpec{

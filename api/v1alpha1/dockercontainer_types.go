@@ -75,9 +75,17 @@ type DockerContainerSpec struct {
 	// +optional
 	Command []string `json:"command,omitempty"`
 
+	// NetworkMode is a Docker network name or mode (bridge, host, or a
+	// compose network such as food_order_website_default). Used when creating
+	// the container.
+	// +optional
+	NetworkMode string `json:"networkMode,omitempty"`
+
 	// ManagementMode controls whether the operator only observes runtime state
 	// or actively reconciles the container toward the desired spec.
+	// Empty defaults to Observe so a CR cannot recreate a live container by accident.
 	// +kubebuilder:validation:Enum=Observe;Enforce
+	// +kubebuilder:default="Observe"
 	// +optional
 	ManagementMode string `json:"managementMode,omitempty"`
 }

@@ -52,8 +52,10 @@ dockerContainer:
   containerName: ""
   dockerHostRef: dockerhost-sample
   restartPolicy: always
-  managementMode: ""
+  managementMode: Observe
+  networkMode: ""
   ports: []
   env: []
   envVars: []
   command: []
+  volumeMounts: []

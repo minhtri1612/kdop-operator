@@ -1,4 +1,5 @@
-# Profile: food-backend — Observe DockerContainer on friend-vps
+# Profile: food-backend — kdop Enforce on friend-vps
+# Do not docker compose up/down this service; the operator owns the container name.
 
 dockerHost:
   enabled: false
@@ -18,6 +19,7 @@ dockerContainer:
   containerName: food-backend
   dockerHostRef: friend-vps
   restartPolicy: always
-  managementMode: Observe
+  managementMode: Enforce
+  networkMode: food_order_website_default
   ports:
     - "3001:3000"
