@@ -6,6 +6,11 @@ HOSTNAME="${hostname}"
 hostnamectl set-hostname "$HOSTNAME"
 
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+mkdir -p /etc/needrestart/conf.d
+cat >/etc/needrestart/conf.d/no-prompt.conf <<'EOF'
+$nrconf{restart} = 'a';
+EOF
 
 # SSM first — Ubuntu EC2 AMI already ships amazon-ssm-agent via snap (deb install conflicts)
 apt-get update -y
@@ -22,7 +27,7 @@ else
   systemctl enable --now amazon-ssm-agent || true
 fi
 
-apt-get install -y gnupg lsb-release jq git unzip
+apt-get install -y gnupg lsb-release jq git unzip make
 
 # Docker
 install -m 0755 -d /etc/apt/keyrings

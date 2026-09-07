@@ -71,4 +71,11 @@ Open a PR touching `terraform/` → see Plan. Merge → Apply.
 2. PR → review plan in Actions
 3. Merge `main` → apply (or Actions → Terraform → `apply`)
 
-Destroy still careful: prefer `workflow_dispatch` with a dedicated destroy job later, or local with same OIDC/role.
+Destroy control plane (EC2/VPC/SG only): Actions → **Terraform** → Run workflow → `destroy`. Confirm must be `destroy-control-plane`.
+
+This uses the `terraform/` root and state key `control-plane/terraform.tfstate`. It does **not** destroy:
+
+- `terraform/bootstrap-state` — S3 bucket + DynamoDB lock
+- `terraform/github-oidc` — IAM role for this workflow
+
+After destroy, run `apply` to recreate the control plane against the same backend.

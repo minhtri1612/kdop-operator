@@ -62,6 +62,12 @@ ws://<public_ip>:30000/ws?...
 
 ## Destroy (save money)
 
+Control plane only (EC2/VPC). **Does not** delete the S3 state bucket or DynamoDB lock table.
+
+GitHub: Actions → **Terraform** → Run workflow → `destroy`, confirm `destroy-control-plane`.
+
+Or locally (same `backend.hcl`):
+
 ```bash
 terraform destroy
 ```

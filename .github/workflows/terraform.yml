@@ -13,13 +13,19 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "plan or apply"
+        description: "plan, apply, or destroy (control plane only — S3/DynamoDB stay)"
         required: true
         default: "plan"
         type: choice
         options:
           - plan
           - apply
+          - destroy
+      confirm:
+        description: "For destroy only: type destroy-control-plane"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   id-token: write   # OIDC → AWS
@@ -186,5 +192,68 @@ jobs:
       - name: Terraform apply
         run: |
           terraform apply -input=false -auto-approve \
+            -var="use_spot=true" \
+            -var="aws_region=${AWS_REGION}"
+
+  # Separate Terraform root: terraform/ only (EC2, VPC, SG, IAM instance profile).
+  # Does NOT run terraform/bootstrap-state (S3 + DynamoDB) or terraform/github-oidc.
+  destroy:
+    name: Terraform Destroy (control plane)
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    environment: aws-prod
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Confirm control-plane destroy
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.confirm }}" != "destroy-control-plane" ]; then
+            echo "::error::Set confirm to destroy-control-plane. Destroys terraform/ only (EC2/VPC). S3 state bucket and DynamoDB lock table are never touched."
+            exit 1
+          fi
+          echo "Confirmed. Destroying control plane (terraform/). Backend S3 + DynamoDB stay."
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: gha-kdop-terraform-destroy
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+          role-skip-session-tagging: true
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Write backend.hcl
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE }}
+        run: |
+          cat > backend.hcl <<EOF
+          bucket         = "${TF_STATE_BUCKET}"
+          key            = "control-plane/terraform.tfstate"
+          region         = "${AWS_REGION}"
+          dynamodb_table = "${TF_STATE_LOCK_TABLE}"
+          encrypt        = true
+          EOF
+
+      - name: Terraform init
+        run: terraform init -backend-config=backend.hcl -input=false
+
+      - name: Terraform destroy
+        run: |
+          terraform destroy -input=false -auto-approve \
             -var="use_spot=true" \
             -var="aws_region=${AWS_REGION}"
