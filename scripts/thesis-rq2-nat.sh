@@ -111,11 +111,23 @@ for i in $(seq 1 "${TRIALS}"); do
   done
   [ "$(phase)" = "Connected" ] || { echo "trial ${i}: host not Connected before the fault" >&2; exit 1; }
 
-  # The kill request reaches the Engine, which stops the client and drops the tunnel;
-  # the API response is usually lost with the session. That is the expected behaviour.
-  timeout 20 kubectl -n "${NS}" exec "${HELPER}" -- docker kill "${CLIENT_NAME}" >/dev/null 2>&1 || true
+  # Hold the client DOWN long enough for the Host reconciler (30 s ping) to observe
+  # Error. A plain "docker kill" + --restart=always reconnects in ~5-15 s, which is
+  # faster than the Host requeue, so Error is never seen and the old loop hung until
+  # TIMEOUT. Schedule a delayed restart ON THE EDGE (via docker.sock) before we cut
+  # the session; after that Path A is down and we can only watch kubectl.
+  HOLD_DOWN="${HOLD_DOWN:-45}"
+  echo "trial ${i}: scheduling edge restart in ${HOLD_DOWN}s, then stopping ${CLIENT_NAME}"
+  d run -d --rm --name "kdop-eval-rearm-${i}" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    "${HELPER_IMAGE}" \
+    sh -c "sleep ${HOLD_DOWN}; docker update --restart=always ${CLIENT_NAME}; docker start ${CLIENT_NAME}" \
+    >/dev/null
+  d update --restart=no "${CLIENT_NAME}" >/dev/null
+  # stop drops the tunnel; the API response is usually lost — that is expected
+  timeout 20 kubectl -n "${NS}" exec "${HELPER}" -- docker stop "${CLIENT_NAME}" >/dev/null 2>&1 || true
   t0="$(now)"
-  echo "trial ${i}: killed ${CLIENT_NAME} at ${t0}"
+  echo "trial ${i}: stopped ${CLIENT_NAME} at ${t0} (rearm in ${HOLD_DOWN}s)"
 
   t_err=""; t_conn=""
   deadline="$(awk -v t="${t0}" -v s="${TIMEOUT}" 'BEGIN{print t+s}')"
@@ -123,12 +135,16 @@ for i in $(seq 1 "${TRIALS}"); do
     p="$(phase)"
     if [ -z "${t_err}" ] && [ "${p}" = "Error" ]; then
       t_err="$(delta "${t0}" "$(now)")"
+      echo "trial ${i}: phase=Error after ${t_err}s"
     fi
-    if [ -n "${t_err}" ] && [ "${p}" = "Connected" ]; then t_conn="$(delta "${t0}" "$(now)")"; break; fi
+    if [ -n "${t_err}" ] && [ "${p}" = "Connected" ]; then
+      t_conn="$(delta "${t0}" "$(now)")"
+      break
+    fi
     sleep "${POLL}"
   done
 
-  [ -n "${t_err}" ] || t_err="not observed"
+  [ -n "${t_err}" ] || { echo "trial ${i}: FAILED - never saw phase=Error in ${TIMEOUT}s (is Host pinging?)" >&2; exit 1; }
   [ -n "${t_conn}" ] || { echo "trial ${i}: FAILED - phase never returned to Connected in ${TIMEOUT}s" >&2; exit 1; }
 
   echo "${i},${t_err},${t_conn}" >>"${CSV}"
